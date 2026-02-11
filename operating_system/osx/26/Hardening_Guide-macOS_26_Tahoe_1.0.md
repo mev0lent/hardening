@@ -167,7 +167,7 @@ There are three security policies[^9] for a Mac with Apple Silicon:
 
 All local policies MUST be set to *Full Security*.
 
-The current local policies settings can be reviewed using a tool named `bputil`. This tool is only available on Apple Silicon. If you run this tool on `x86\_64`, it will output `bputil is not yet supported on this platform`. The following output is returned when running `bputil`:
+The current local policies settings can be reviewed using a tool named `bputil`. This tool is only available on Apple Silicon. If you run this tool on `x86_64`, it will output `bputil is not yet supported on this platform`. The following output is returned when running `bputil`:
 
     > sudo bputil -d
     Password:
@@ -797,7 +797,7 @@ It is necessary to delete the line `Getting account policies for user <ernw>` in
     Password:
     Setting global account policies
 
-The recommended policy is added to this document and named `ERNW\_password\_policy.plist`. If this policy suits your password policy requirements, only setting the policy may be necessary by running the following command:
+The recommended policy is added to this document and named `ERNW_password_policy.plist`. If this policy suits your password policy requirements, only setting the policy may be necessary by running the following command:
 
     > sudo pwpolicy setaccountpolicies ERNW_password_policy.plist
     Password:
@@ -1132,7 +1132,7 @@ It MAY be used for necessary operating system-related or application-related use
 
 </div>
 
-Keychain iCloud Sync MUST be disabled to prevent secrets from syncing between all Apple ID’s devices in business cases. For personal use, using iCloud Sync to synchronize secrets across devices MAY be used. Disabling this feature can be performed using a configuration profile key `allowCloudKeychainSync` in the domain `com.apple.applicationaccess`. This key is configured in <a href="#section:05-09-disable-icloud-services" data-reference-type="ref+label" data-reference="section:05-09-disable-icloud-services">7.7</a> with the provided configuration profile `ERNW\_icloud\_services.mobileconfig`.
+Keychain iCloud Sync MUST be disabled to prevent secrets from syncing between all Apple ID’s devices in business cases. For personal use, using iCloud Sync to synchronize secrets across devices MAY be used. Disabling this feature can be performed using a configuration profile key `allowCloudKeychainSync` in the domain `com.apple.applicationaccess`. This key is configured in <a href="#section:05-09-disable-icloud-services" data-reference-type="ref+label" data-reference="section:05-09-disable-icloud-services">7.7</a> with the provided configuration profile `ERNW_icloud_services.mobileconfig`.
 
 Please note that this essentially disconnects the system from other devices using the same Apple-ID/Apple Account. Once you install these policies, you can *not* easily revert these settings.
 
@@ -1187,18 +1187,18 @@ If the result is `Setting not found`, the system is not compliant and the settin
 
 The **Pluggable Authentication Modules (PAM)** system controls how users are authenticated for system services. It is possible to configure the system to allow Touch ID for the `sudo` command. This enables administrators to use their biometrics, secured by the Secure Enclave, to authorize privileged commands.
 
-This guide discourages editing the `/etc/pam.d/sudo` directly because macOS may overwrite that file during system upgrades, resulting in removing the configuration. Modern macOS versions include a directive `auth include sudo\_local` in the main configuration. The correct, safe way to enable Touch ID is to create and edit `/etc/pam.d/sudo\_local`. This file persists across updates and separates custom configurations from system defaults. The PAM module MAY be changed to enable this feature.
+This guide discourages editing the `/etc/pam.d/sudo` directly because macOS may overwrite that file during system upgrades, resulting in removing the configuration. Modern macOS versions include a directive `auth include sudo_local` in the main configuration. The correct, safe way to enable Touch ID is to create and edit `/etc/pam.d/sudo_local`. This file persists across updates and separates custom configurations from system defaults. The PAM module MAY be changed to enable this feature.
 
 ###### Compliance Check
 
-This check verifies that `pam\_tid.so` is enabled in the local override file.
+This check verifies that `pam_tid.so` is enabled in the local override file.
 
     > grep 'pam_tid.so' /etc/pam.d/sudo_local
     auth       sufficient     pam_tid.so
 
 ###### Verifying System Integrity
 
-This check ensures that the main system configuration has not been tampered with and still requires the standard password fallback (`pam\_opendirectory.so`) if Touch ID fails.
+This check ensures that the main system configuration has not been tampered with and still requires the standard password fallback (`pam_opendirectory.so`) if Touch ID fails.
 
     > grep 'pam_opendirectory.so' /etc/pam.d/sudo
     auth       required       pam_opendirectory.so
@@ -1209,7 +1209,7 @@ To safely enable Touch ID for sudo, copy the system-provided template to the act
 
     sudo cp /etc/pam.d/sudo_local.template /etc/pam.d/sudo_local
 
-Open the file in a text editor (e.g., `sudo nano /etc/pam.d/sudo\_local`) and uncomment the `pam\_tid.so` line.
+Open the file in a text editor (e.g., `sudo nano /etc/pam.d/sudo_local`) and uncomment the `pam_tid.so` line.
 
 The changes take effect immediately.
 
@@ -1993,7 +1993,7 @@ The following command provides a powerful overview of services actively managed 
 
 This section details the hardening of macOS applications by disabling their iCloud functionality to prevent data exfiltration. By default, macOS automatically synchronizes user data such as passwords (keychain), photos, calendar entries, and documents to the user’s iCloud account. In enterprise contexts, this data exfiltration risk MUST be mitigated. While the sync is disabled, the local applications (such as Mail or Notes) remain usable for non-iCloud storage.
 
-To enforce this, the `ERNW\_icloud\_services.mobileconfig` policy (or equivalent MDM payload) MUST be installed on the macOS system. The following table lists the relevant keys for the `com.apple.applicationaccess` payload that control iCloud services. All keys belong to the `com.apple.applicationaccess` domain and MUST be set to `false` (boolean) to disable the respective service.
+To enforce this, the `ERNW_icloud_services.mobileconfig` policy (or equivalent MDM payload) MUST be installed on the macOS system. The following table lists the relevant keys for the `com.apple.applicationaccess` payload that control iCloud services. All keys belong to the `com.apple.applicationaccess` domain and MUST be set to `false` (boolean) to disable the respective service.
 
 <div class="longtable*">
 
@@ -2087,7 +2087,7 @@ If the result is `0` (or empty output), the hostname is blocked or unresolvable.
 
 macOS and iOS devices include functionality to request and provide passwords to known (*trusted*) devices such as devices belonging to contacts when they are nearby. This behavior is undesired in the corporate context and therefore MUST be turned off.
 
-To do so, install the provided `ERNW\_password\_sharing.mobileconfig` policy on the macOS system.
+To do so, install the provided `ERNW_password_sharing.mobileconfig` policy on the macOS system.
 
 <div class="longtable*">
 
@@ -2280,7 +2280,7 @@ In the *Client Hello* packet, the client advertises its cryptographic capabiliti
 - Supported Groups (`0x000a`): The client lists `X25519MLKEM768 (0x11ec)` as a supported group.
 - Key Share (`0x0033`): The client preemptively sends the public key material for `X25519MLKEM768`. This allows the server to complete the handshake in a single round-trip if it also supports PQC.
 
-To filter for this specific quantum-secure exchange in Wireshark, use the following display filter `tls.handshake.extensions\_key\_share\_group == 4588 || tls.handshake.extensions\_supported\_group == 0x11ec` where `4588` is the decimal representation of the hex ID `0x11ec`.
+To filter for this specific quantum-secure exchange in Wireshark, use the following display filter `tls.handshake.extensions_key_share_group == 4588 || tls.handshake.extensions_supported_group == 0x11ec` where `4588` is the decimal representation of the hex ID `0x11ec`.
 
 <figure id="fig:wireshark">
 <div id="fig:wireshark">
