@@ -1,0 +1,2538 @@
+title: Harden Administrative Accounts
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: unique-uid-zero
+  description: Verify that 'root' is the only account with UID 0 to prevent unauthorized superuser access.
+  command: 'awk -F: ''($3 == 0) { print $1 }'' /etc/passwd | wc -l'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Audit /etc/passwd and remove any additional users with UID 0.'
+  fix_sudo: false
+  affected_file: /etc/passwd
+  post_action: None
+  security_level: baseline
+  risk_level: high
+  risk_desc: Multiple UID 0 accounts bypass accountability and are often a sign of system compromise.
+- id: restrict-su-pam
+  description: Restrict access to the 'su' command to the 'sudo' or 'wheel' group using PAM.
+  command: |
+    grep -E '^\s*auth\s+required\s+pam_wheel.so' /etc/pam.d/su | wc -l
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add ''auth required pam_wheel.so use_uid'' to /etc/pam.d/su. Ensure your admin user is in
+    the ''wheel'' (RHEL) or ''sudo'' (Debian) group first.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/su
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Incorrect PAM configuration can lock all users out of the 'su' command, preventing privilege escalation if sudo
+    fails.
+
+---
+
+title: Check that All Passwords Are Shadowed
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: passwords-shadowed
+  description: Verify that all accounts in /etc/passwd have an 'x' in the password field, indicating hashes are stored in
+    /etc/shadow.
+  command: |
+    awk -F: '($2 != "x") {print}' /etc/passwd | wc -l
+  expected: 0
+  sudo: false
+  fix: sudo pwconv
+  fix_sudo: true
+  affected_file: /etc/passwd
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Modern systems use shadowing by default. If hashes are in /etc/passwd, they are readable by any user, allowing
+    offline cracking.
+
+---
+
+title: Use Strong Hashing Algorithm
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 39-auth-01-pass-encryption
+  description: Ensure passwords use SHA512 or better hashing to protect against offline cracking.
+  command: grep -E '^ENCRYPT_METHOD (SHA512|YESCRYPT)' /etc/login.defs | wc -l
+  expected: 1
+  sudo: false
+  fix: sudo sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD YESCRYPT/' /etc/login.defs
+  fix_sudo: true
+  affected_file: /etc/login.defs
+  post_action: Existing hashes are not updated automatically. Users MUST change their passwords to migrate to the new algorithm.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Ensures compliance for new accounts and password changes. No risk of lockout.
+
+---
+
+title: Password Policy
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: pam-stack-integration
+  description: Verify that the pam_pwquality module is actually active in the PAM stack.
+  command: |
+    grep -E '^\s*password\s+requisite\s+pam_pwquality.so' /etc/pam.d/common-password | wc -l
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Ensure ''password requisite pam_pwquality.so'' is present in /etc/pam.d/common-password. Modifying
+    PAM files via scripts is too hazardous for automated fixing.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/common-password
+  post_action: None
+  security_level: baseline
+  risk_level: high
+  risk_desc: If the module is missing from the stack, settings in pwquality.conf are ignored. Incorrect manual editing may
+    lock out users.
+- id: pass-history
+  description: Prevent password reuse by remembering the last 5 passwords.
+  command: |
+    grep -E '^\s*password\s+required\s+pam_pwhistory.so' /etc/pam.d/common-password | grep 'remember=5' | wc -l
+  expected: 1
+  sudo: true
+  fix: 'Manual action required: Add ''password required pam_pwhistory.so remember=5 enforce_for_root'' to /etc/pam.d/common-password.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/common-password
+  post_action: None
+  security_level: baseline
+  risk_level: high
+  risk_desc: Required to prevent users from immediately cycling back to a compromised password.
+- id: pam-unix-yescrypt
+  description: Ensure pam_unix is configured to use the yescrypt hashing algorithm.
+  command: |
+    grep -E '^\s*password\s+.*pam_unix.so.*yescrypt' /etc/pam.d/common-password | wc -l
+  expected: 1
+  sudo: true
+  fix: 'Manual action required: Update the pam_unix.so line in /etc/pam.d/common-password to include the ''yescrypt'' option.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/common-password
+  post_action: Only affects new passwords.
+  security_level: high
+  risk_level: medium
+  risk_desc: Yescrypt provides superior resistance to GPU-based cracking compared to SHA512.
+
+---
+
+title: Account Lockout (Faillock)
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: faillock-unlock-time
+  description: Verify that the account lockout duration is at least 180 seconds.
+  command: grep -E 'pam_faillock.so.*unlock_time=(18[0-9]|19[0-9]|[2-9][0-9][0-9])' /etc/pam.d/common-auth | wc -l
+  expected: 2
+  sudo: true
+  fix: 'Manual action required: Ensure ''unlock_time=180'' is set for both pam_faillock entries in /etc/pam.d/common-auth.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/common-auth
+  post_action: None
+  security_level: baseline
+  risk_level: medium
+  risk_desc: A shorter unlock time increases the effectiveness of automated brute-force attacks.
+
+---
+
+title: Password & Account Aging
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 41-auth-03-pass-lifetime
+  description: Verify that password maximum age is set to disable legacy rotation (99999 days) in /etc/login.defs.
+  command: grep '^PASS_MAX_DAYS' /etc/login.defs | awk '{if($2>=99999) print 1; else print 0}'
+  expected: 1
+  sudo: false
+  fix: sudo sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 99999/' /etc/login.defs
+  fix_sudo: true
+  affected_file: /etc/login.defs
+  post_action: Existing users must be updated manually via chage.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Prevents password exhaustion and weak patterns caused by frequent forced changes.
+- id: 65-auth-13-pass-min-days
+  description: Ensure a minimum password age of 1 day to prevent rapid cycling through password history.
+  command: grep '^PASS_MIN_DAYS' /etc/login.defs | awk '{if($2>=1) print 1; else print 0}'
+  expected: 1
+  sudo: false
+  fix: sudo sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS 1/' /etc/login.defs
+  fix_sudo: true
+  affected_file: /etc/login.defs
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Low risk. Hinders users from immediately reverting to an old password.
+- id: 66-auth-14-account-inactivity
+  description: Ensure new accounts are disabled 30 days after password expiration (INACTIVE=30).
+  command: useradd -D | grep '^INACTIVE' | cut -d'=' -f2 | grep -q '30' && echo 1 || echo 0
+  expected: 1
+  sudo: false
+  fix: sudo useradd -D -f 30
+  fix_sudo: true
+  affected_file: /etc/default/useradd
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Prevents abandoned accounts from remaining active and vulnerable to takeover.
+
+---
+
+title: Restricting Direct Root Login
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 67-auth-15-pam-securetty
+  description: Ensure pam_securetty.so is enabled to restrict root logins to specific terminals.
+  command: |
+    grep -E '^\s*auth\s+required\s+pam_securetty.so' /etc/pam.d/login | wc -l
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add ''auth required pam_securetty.so'' to /etc/pam.d/login.'
+  fix_sudo: false
+  affected_file: /etc/pam.d/login
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Ensures root cannot log in from unauthorized TTYs. Risk of lockout if local console access is the only remaining
+    login method.
+- id: 68-auth-16-securetty-config
+  description: Verify that /etc/securetty exists and contains a restricted list of terminals.
+  command: |
+    [ -f /etc/securetty ] && grep -v '^#' /etc/securetty | grep -qv '^\s*$' && echo 1 || echo 0
+  expected: 1
+  sudo: true
+  fix: 'Manual action required: Create /etc/securetty and list only the necessary consoles (e.g., ''console'', ''tty1'').'
+  fix_sudo: false
+  affected_file: /etc/securetty
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Improper configuration can block access via the emergency or serial console.
+
+---
+
+title: Harden Sudo Usage and Logging
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: use-pty
+  description: Ensure that a pseudo-terminal (PTY) is allocated for all sudo commands to prevent input hijacking and ensure
+    reliable logging.
+  command: |
+    sudo grep -rE '^Defaults\s+use_pty' /etc/sudoers /etc/sudoers.d/ | wc -l
+  expected: 1
+  sudo: true
+  fix: echo 'Defaults use_pty' | sudo tee /etc/sudoers.d/90-hardening-pty
+  fix_sudo: true
+  affected_file: /etc/sudoers.d/90-hardening-pty
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Standard hardening practice; improves logging reliability.
+- id: sudo-logging
+  description: Verify that sudo actions are directed to a dedicated log file for centralized auditing.
+  command: |
+    sudo grep -rE '^Defaults\s+logfile=' /etc/sudoers /etc/sudoers.d/ | wc -l
+  expected: 1
+  sudo: true
+  fix: echo 'Defaults logfile=/var/log/sudo.log' | sudo tee /etc/sudoers.d/90-hardening-logging && sudo touch /var/log/sudo.log
+    && sudo chmod 0600 /var/log/sudo.log
+  fix_sudo: true
+  affected_file: /etc/sudoers.d/90-hardening-logging
+  post_action: Verify log file permissions are 0600.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Ensures administrative actions are isolated from general system logs.
+- id: sudo-timeout
+  description: Set a short timestamp timeout (5 min) to enforce frequent password re-entry.
+  command: |
+    sudo grep -rE '^Defaults\s+timestamp_timeout=([0-5])' /etc/sudoers /etc/sudoers.d/ | wc -l
+  expected: 1
+  sudo: true
+  fix: echo 'Defaults timestamp_timeout=5' | sudo tee /etc/sudoers.d/90-hardening-timeout
+  fix_sudo: true
+  affected_file: /etc/sudoers.d/90-hardening-timeout
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: Minor user inconvenience; significantly reduces the window for session hijacking.
+- id: restrict-su-pam
+  description: Verify that su is restricted to the wheel group via PAM.
+  command: |
+    grep -E '^auth\\s+required\\s+pam_wheel.so\\s+use_uid' /etc/pam.d/su | wc -l
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add ''auth required pam_wheel.so use_uid'' to /etc/pam.d/su.'
+  fix_sudo: true
+  affected_file: /etc/pam.d/su
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Prevents unauthorized user switching.
+
+---
+
+title: Session and Screen Lock Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: shell-timeout
+  description: Verify that the TMOUT variable is set to 300 seconds or less in global profile configurations.
+  command: |
+    grep -rE '^\s*TMOUT=(300|[1-2][0-9][0-9]|[1-9][0-9]|[0-9])' /etc/profile /etc/profile.d/ | wc -l
+  expected: 1
+  sudo: false
+  fix: |
+    echo -e 'TMOUT=300\nexport TMOUT\nreadonly TMOUT' | sudo tee /etc/profile.d/90-tmout.sh
+  fix_sudo: true
+  affected_file: /etc/profile.d/90-tmout.sh
+  post_action: Users must re-login for the change to take effect.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Automatically logs out inactive shells.
+- id: gnome-lock-enabled
+  description: Ensure the GNOME screensaver is configured to lock the screen after a period of inactivity.
+  command: gsettings get org.gnome.desktop.screensaver lock-enabled
+  expected: 'true'
+  sudo: false
+  fix: 'Manual action required: Enforce via dconf profile in /etc/dconf/db/local.d/locks/session to prevent user override.'
+  fix_sudo: true
+  affected_file: /etc/dconf/db/local.d/00-security-settings
+  post_action: Run 'sudo dconf update' to apply system-wide changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Essential for physical security in desktop environments.
+- id: gnome-idle-delay
+  description: Ensure the GNOME idle delay is set to 300 seconds (5 minutes) or less.
+  command: gsettings get org.gnome.desktop.session idle-delay | awk '{if($2<=300 && $2!=0) print 1; else print 0}'
+  expected: 1
+  sudo: false
+  fix: gsettings set org.gnome.desktop.session idle-delay 300
+  fix_sudo: false
+  affected_file: User GSettings Database
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Mandatory for compliance in office/shared environments.
+
+---
+
+title: User Authentication Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 40-auth-02-pass-complexity
+  description: Ensure password complexity is enforced (minlen=14).
+  command: |
+    grep -E 'minlen=14' /etc/security/pwquality.conf | wc -l
+  expected: 1
+  sudo: true
+  fix: |
+    echo 'minlen=14' | sudo tee -a /etc/security/pwquality.conf
+  fix_sudo: true
+  affected_file: /etc/security/pwquality.conf
+  post_action: None
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Does not force reset of existing passwords.
+- id: 43-auth-05-root-lock
+  description: Ensure the root account is locked to prevent direct login.
+  command: |
+    sudo passwd -S root | grep -c 'L'
+  expected: 1
+  sudo: true
+  fix: sudo passwd -l root
+  fix_sudo: true
+  affected_file: /etc/shadow
+  post_action: None
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Requires a valid user with sudo privileges to be configured first.
+
+---
+
+title: Verifying that Vulnerable and Not Required Software Is Disabled
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: pkg-purge-insecure
+  description: Verify that legacy insecure protocol binaries (rsh, telnetd, vsftpd, tftpd) are not present on the system.
+  command: |
+    for bin in rsh telnetd vsftpd tftpd; do command -v $bin >/dev/null 2>&1 && echo found; done | wc -l
+  expected: 0
+  sudo: false
+  fix: 'Manual action required: Remove insecure protocol packages (e.g., on Debian/Ubuntu: sudo apt-get purge -y rsh-client
+    telnetd vsftpd tftpd)'
+  fix_sudo: false
+  affected_file: N/A
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Removes packages that transmit data in clear text.
+- id: svc-disable-avahi
+  description: Ensure the Avahi daemon is disabled and masked to prevent unauthorized network discovery.
+  command: systemctl is-enabled avahi-daemon 2>/dev/null | grep -E 'disabled|masked' | wc -l
+  expected: 1
+  sudo: false
+  fix: sudo systemctl mask avahi-daemon
+  fix_sudo: true
+  affected_file: avahi-daemon.service
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Disables mDNS/Zero-conf networking.
+- id: cups-localhost-only
+  description: Verify that the CUPS printing service is restricted to the localhost interface.
+  command: |
+    grep -rE '^\s*Listen\s+(localhost:631|127\.0\.0\.1:631|/run/cups/cups\.sock)' /etc/cups/cupsd.conf | wc -l
+  expected: 1
+  sudo: true
+  fix: 'Manual action required: Edit /etc/cups/cupsd.conf to ensure ''Listen'' directives only point to localhost or the local
+    socket.'
+  fix_sudo: true
+  affected_file: /etc/cups/cupsd.conf
+  post_action: sudo systemctl restart cups
+  security_level: high
+  risk_level: medium
+  risk_desc: Prevents remote access to the printing service while maintaining local functionality.
+- id: svc-disable-bluetooth
+  description: Ensure Bluetooth services are disabled on systems where wireless communication is not required.
+  command: systemctl is-enabled bluetooth 2>/dev/null | grep -E 'disabled|masked' | wc -l
+  expected: 1
+  sudo: false
+  fix: sudo systemctl mask bluetooth
+  fix_sudo: true
+  affected_file: bluetooth.service
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Reduces the wireless attack surface.
+
+---
+
+title: Configuring and Hardening the Host Firewall
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: firewall-active
+  description: Verify that a host-based firewall is active and enabled (UFW on Debian/Ubuntu/Arch, firewalld on Rocky/Fedora/OpenSUSE).
+  command: '{ sudo ufw status 2>/dev/null | grep -q ''Status: active'' || sudo firewall-cmd --state 2>/dev/null | grep -q
+    ''running''; } && echo 1 || echo 0'
+  expected: 1
+  sudo: true
+  fix: |
+    Manual action required: Enable and start your system's host firewall.
+    On Ubuntu/Debian/Arch (UFW):
+      sudo ufw enable
+    On Rocky/Fedora/RHEL/OpenSUSE (firewalld):
+      sudo systemctl enable --now firewalld
+  fix_sudo: true
+  affected_file: /etc/ufw/ufw.conf
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Essential for protecting the system from unsolicited network traffic.
+- id: firewall-default-deny-incoming
+  description: 'Verify that the default policy for incoming traffic is set to deny (UFW: ''Default: deny (incoming)''; firewalld:
+    default zone is ''drop'' or ''block'').'
+  command: '{ sudo ufw status verbose 2>/dev/null | grep -q ''Default: deny (incoming)'' || { sudo firewall-cmd --state 2>/dev/null
+    | grep -q ''running'' && sudo firewall-cmd --get-default-zone 2>/dev/null | grep -qE ''^(drop|block)$''; }; } && echo
+    1 || echo 0'
+  expected: 1
+  sudo: true
+  fix: |
+    Manual action required: Set the default incoming policy to deny.
+    On Ubuntu/Debian/Arch (UFW):
+      sudo ufw default deny incoming
+    On Rocky/Fedora/RHEL/OpenSUSE (firewalld):
+      sudo firewall-cmd --set-default-zone=drop --permanent
+      sudo firewall-cmd --reload
+  fix_sudo: true
+  affected_file: /etc/default/ufw
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Ensures no external connections are accepted unless explicitly allowed.
+
+---
+
+title: SSH Client Security
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: ssh-server-removed
+  description: Ensure the SSH server daemon is not installed to close the remote access attack surface.
+  command: command -v sshd >/dev/null 2>&1 && echo 1 || echo 0
+  expected: 0
+  sudo: false
+  fix: 'Manual action required: Remove the SSH server package (e.g., on Debian/Ubuntu: sudo apt-get purge -y openssh-server)'
+  fix_sudo: false
+  affected_file: N/A
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: Closing the SSH port prevents remote unauthorized login attempts.
+- id: ssh-client-installed
+  description: Verify that the SSH client is installed for secure outgoing connections.
+  command: command -v ssh >/dev/null 2>&1 && echo 1 || echo 0
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Install the SSH client package (e.g., on Debian/Ubuntu: sudo apt-get install -y openssh-client)'
+  fix_sudo: false
+  affected_file: N/A
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Required for the user to securely connect to other remote systems.
+
+---
+
+title: Kernel Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 14-kernel-01-dmesg-restrict
+  description: Restrict access to the kernel message buffer (dmesg) to root only to prevent information leakage.
+  command: sysctl -n kernel.dmesg_restrict
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.dmesg_restrict=1' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Prevents non-root users from viewing kernel logs. May impact debugging tools running as user.
+- id: 15-kernel-02-randomize-va-space
+  description: Enable Address Space Layout Randomization (ASLR) to prevent buffer overflow exploits.
+  command: sysctl -n kernel.randomize_va_space
+  expected: 2
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.randomize_va_space=2' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Standard security feature on modern Linux.
+- id: 16-kernel-03-disable-core-dumps
+  description: Restrict core dumps (fs.suid_dumpable) to prevent sensitive memory from being written to disk during crashes.
+  command: sysctl -n fs.suid_dumpable
+  expected: 0
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'fs.suid_dumpable=0' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf' to apply changes.
+  security_level: high
+  risk_level: medium
+  risk_desc: Inhibits debugging of crashing services. Developers may need this re-enabled temporarily.
+- id: 17-kernel-04-yama-ptrace-scope
+  description: Restrict ptrace to prevent unprivileged processes from inspecting sibling processes.
+  command: sysctl -n kernel.yama.ptrace_scope
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.yama.ptrace_scope=1' | sudo tee /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: baseline
+  risk_level: medium
+  risk_desc: May interfere with gdb/strace for non-root users.
+- id: 18-kernel-05-kptr-restrict
+  description: Hide kernel symbols/addresses from unprivileged users to mitigate KASLR bypass attacks.
+  command: sysctl -n kernel.kptr_restrict
+  expected: 2
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.kptr_restrict=2' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: high
+  risk_level: low
+  risk_desc: Essential for protecting against kernel exploits; minimal impact on normal operations.
+- id: 19-kernel-06-ebpf-unprivileged-disabled
+  description: Disable unprivileged eBPF to reduce the kernel attack surface.
+  command: sysctl -n kernel.unprivileged_bpf_disabled
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.unprivileged_bpf_disabled=1' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: high
+  risk_level: medium
+  risk_desc: Breaks non-root performance tracing and specific network filters.
+- id: 20-kernel-07-ebpf-jit-hardening
+  description: Enable eBPF JIT hardening to mitigate JIT spraying and information leaks.
+  command: sysctl -n net.core.bpf_jit_harden
+  expected: 2
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'net.core.bpf_jit_harden=2' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Minimal performance overhead for JIT compilation.
+- id: 21-kernel-08-userns-clone-disabled
+  description: Disable unprivileged user namespace creation to limit attack surface.
+  command: sysctl -n kernel.unprivileged_userns_clone
+  expected: 0
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'kernel.unprivileged_userns_clone=0' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: high
+  risk_level: high
+  risk_desc: 'CRITICAL: Breaks rootless containers (Podman), Flatpaks, and browser sandboxing.'
+- id: 22-kernel-09-protected-fifos
+  description: Enable strict FIFO protection to prevent race conditions in named pipes.
+  command: sysctl -n fs.protected_fifos
+  expected: 2
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
+    echo 'fs.protected_fifos=2' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
+  security_level: high
+  risk_level: low
+  risk_desc: Prevents a common class of local privilege escalation.
+- id: 23-mod-01-blacklist-dccp
+  description: Blacklist the DCCP protocol module to reduce the network attack surface.
+  command: |
+    grep -r 'blacklist dccp' /etc/modprobe.d/ | wc -l
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/modprobe.d/
+    sudo touch /etc/modprobe.d/blacklist-dccp.conf
+    echo 'blacklist dccp' | sudo tee /etc/modprobe.d/blacklist-dccp.conf
+  fix_sudo: true
+  affected_file: /etc/modprobe.d/blacklist-dccp.conf
+  post_action: Run 'sudo modprobe -r dccp' and update initramfs.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Only impacts applications using the Datagram Congestion Control Protocol.
+- id: 24-mod-02-blacklist-sctp
+  description: Blacklist the SCTP protocol module to reduce the network attack surface.
+  command: |
+    grep -r 'blacklist sctp' /etc/modprobe.d/ | wc -l
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/modprobe.d/
+    sudo touch /etc/modprobe.d/blacklist-sctp.conf
+    echo 'blacklist sctp' | sudo tee /etc/modprobe.d/blacklist-sctp.conf
+  fix_sudo: true
+  affected_file: /etc/modprobe.d/blacklist-sctp.conf
+  post_action: Run 'sudo modprobe -r sctp' and update initramfs.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Disables Stream Control Transmission Protocol.
+- id: 25-net-01-syn-cookies
+  description: Enable TCP SYN cookies to mitigate SYN flood Denial of Service (DoS) attacks.
+  command: sysctl -n net.ipv4.tcp_syncookies
+  expected: 1
+  sudo: false
+  fix: |
+    sudo mkdir -p /etc/sysctl.d/
+    sudo touch /etc/sysctl.d/90-network-hardening.conf
+    echo 'net.ipv4.tcp_syncookies=1' | sudo tee -a /etc/sysctl.d/90-network-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-network-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-network-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Activates only under high load/attack. No impact on normal traffic.
+- id: 26-net-02-rp-filter
+  description: Enable Reverse Path Filtering (Anti-spoofing) to validate source addresses.
+  command: sysctl -n net.ipv4.conf.all.rp_filter
+  expected: 1
+  sudo: false
+  fix: echo 'net.ipv4.conf.all.rp_filter=1' | sudo tee -a /etc/sysctl.d/90-network-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-network-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-network-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Strict mode (1) may drop packets in asymmetric routing environments. Use loose mode (2) if connectivity fails.
+- id: 27-net-03-accept-redirects
+  description: Disable acceptance of ICMP redirects to prevent routing table manipulation (MITM).
+  command: sysctl -n net.ipv4.conf.all.accept_redirects
+  expected: 0
+  sudo: false
+  fix: echo 'net.ipv4.conf.all.accept_redirects=0' | sudo tee -a /etc/sysctl.d/90-network-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-network-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-network-hardening.conf' to apply changes.
+  security_level: high
+  risk_level: low
+  risk_desc: Safe to disable unless the network relies on dynamic legacy routing updates.
+- id: 28-net-04-source-route
+  description: Disable acceptance of packets with source routing options.
+  command: sysctl -n net.ipv4.conf.all.accept_source_route
+  expected: 0
+  sudo: false
+  fix: echo 'net.ipv4.conf.all.accept_source_route=0' | sudo tee -a /etc/sysctl.d/90-network-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-network-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-network-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Source routing is deprecated and rarely used; disabling has no operational risk.
+- id: 29-net-05-bogus-icmp
+  description: Ignore ICMP packets with bogus error responses to reduce log noise and potential DoS.
+  command: sysctl -n net.ipv4.icmp_ignore_bogus_error_responses
+  expected: 1
+  sudo: false
+  fix: echo 'net.ipv4.icmp_ignore_bogus_error_responses=1' | sudo tee -a /etc/sysctl.d/90-network-hardening.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-network-hardening.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-network-hardening.conf' to apply changes.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Pure security measure; no impact on legitimate traffic.
+- id: 30-net-06-ipv4-ip_forward-disabled
+  description: Ensure IP forwarding is disabled.
+  command: sysctl -n net.ipv4.ip_forward
+  expected: 0
+  sudo: true
+  fix: |
+    sysctl -w net.ipv4.ip_forward=0
+    sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
+    echo "net.ipv4.ip_forward = 0" >> /etc/sysctl.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.conf
+  post_action: None
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Prevents routing packets between network interfaces.
+- id: 31-net-07-ipv4-conf-all-send_redirects-disabled
+  description: Disable ICMP send_redirects.
+  command: sysctl -n net.ipv4.conf.all.send_redirects
+  expected: 0
+  sudo: true
+  fix: |
+    sysctl -w net.ipv4.conf.all.send_redirects=0
+    sed -i "/net.ipv4.conf.all.send_redirects/d" /etc/sysctl.conf
+    echo "net.ipv4.conf.all.send_redirects = 0" >> /etc/sysctl.conf
+  fix_sudo: true
+  affected_file: /etc/sysctl.conf
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Safe security change for standard operations.
+- id: 32-mod-01-disable-usb-storage
+  description: Prevent the 'usb-storage' kernel module from loading.
+  command: |
+    grep -r 'install usb-storage /bin/true' /etc/modprobe.d/ | wc -l
+  expected: 1
+  sudo: false
+  fix: |
+    echo 'install usb-storage /bin/true' | sudo tee /etc/modprobe.d/blacklist-usb-storage.conf
+  fix_sudo: true
+  affected_file: /etc/modprobe.d/blacklist-usb-storage.conf
+  post_action: Reboot required to unload active modules.
+  security_level: high
+  risk_level: medium
+  risk_desc: Disables ALL USB mass storage devices.
+- id: 33-crypto-01-fips-mode
+  description: Ensure the OS implements NIST FIPS-validated cryptography (Auditing only).
+  command: cat /proc/sys/crypto/fips_enabled
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Enabling FIPS requires installing certified packages (e.g., ubuntu-fips) and modifying the
+    bootloader. Automated fixing is unsafe.'
+  fix_sudo: false
+  affected_file: /boot/grub/grub.cfg
+  post_action: N/A
+  security_level: high
+  risk_level: high
+  risk_desc: Enabling FIPS often disables non-compliant crypto (e.g., certain SSH ciphers), potentially locking out remote
+    access.
+
+---
+
+title: Configure TCP Wrappers and Hosts Access
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: hosts-deny-all
+  description: 'Enforce a ''Default Deny'' policy by ensuring /etc/hosts.deny contains ''ALL: ALL''. This ensures that only
+    services explicitly listed in /etc/hosts.allow are accessible. TCP Wrappers (libwrap) are available on all major distributions
+    but the package name differs: ''tcp-wrappers'' on RHEL/Rocky/Fedora, included in base installations on Debian/Ubuntu/Arch.'
+  command: grep -Px "ALL:\s*ALL" /etc/hosts.deny | wc -l
+  expected: 1
+  sudo: true
+  fix: |
+    Manual action required: Add a default-deny rule to /etc/hosts.deny.
+    First ensure SSH (or your admin service) is allowed in /etc/hosts.allow to prevent lockout, e.g.:
+      echo 'sshd: 192.168.1.' | sudo tee -a /etc/hosts.allow
+    Then apply the deny-all rule:
+      echo 'ALL: ALL' | sudo tee /etc/hosts.deny
+    Note: On Rocky/Fedora/RHEL/OpenSUSE, verify the tcp_wrappers package is installed:
+      e.g., sudo dnf install tcp-wrappers   (RHEL/Rocky/Fedora)
+            sudo zypper install tcpd         (OpenSUSE)
+  fix_sudo: true
+  affected_file: /etc/hosts.deny
+  post_action: None
+  security_level: baseline
+  risk_level: critical
+  risk_desc: 'HIGH LOCKOUT RISK: This rule will block ALL incoming traffic not explicitly permitted in /etc/hosts.allow. You
+    MUST verify that your management IP or service (e.g., sshd) is whitelisted in /etc/hosts.allow before applying this fix.'
+- id: hosts-allow-permissions
+  description: Ensure restrictive permissions (0644) are set on /etc/hosts.allow to prevent unauthorized modification of access
+    control rules.
+  command: stat -c '%a' /etc/hosts.allow
+  expected: 644
+  sudo: false
+  fix: sudo chmod 0644 /etc/hosts.allow
+  fix_sudo: true
+  affected_file: /etc/hosts.allow
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Changing permissions on this file poses a low operational risk.
+- id: hosts-deny-permissions
+  description: Ensure restrictive permissions (0644) are set on /etc/hosts.deny.
+  command: stat -c '%a' /etc/hosts.deny
+  expected: 644
+  sudo: false
+  fix: sudo chmod 0644 /etc/hosts.deny
+  fix_sudo: true
+  affected_file: /etc/hosts.deny
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Changing permissions on this file poses a low operational risk.
+
+---
+
+title: Secure Time Synchronization (Chrony)
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: chronyd-active
+  description: Verify that a time synchronization service (chrony or systemd-timesyncd) is actively running to ensure accurate
+    timekeeping.
+  command: (systemctl is-active chronyd 2>/dev/null || systemctl is-active systemd-timesyncd 2>/dev/null) | grep -c '^active'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Install and enable a time synchronization service (e.g., on Debian/Ubuntu: sudo apt install
+    chrony && sudo systemctl enable --now chronyd)'
+  fix_sudo: false
+  affected_file: System service configuration
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Chrony is the modern standard for time synchronization; enabling it poses no operational risk.
+- id: chronyd-non-root
+  description: Verify that the Chrony daemon runs as an unprivileged user (e.g., 'chrony' or 'ntp') to minimize the impact
+    of a potential compromise.
+  command: ps -eo user,comm | grep chronyd | grep -v root | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Verify the chronyd systemd unit file (e.g., /lib/systemd/system/chronyd.service) contains
+    the ''User=chrony'' directive. Restart if needed.'
+  fix_sudo: true
+  affected_file: /lib/systemd/system/chronyd.service
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: This is usually the default setting in modern distributions and only confirms privilege separation.
+- id: chrony-cmd-restriction
+  description: Ensure that Chrony's command interface (for control and monitoring) is restricted to the localhost interface.
+  command: |
+    grep -cE '^\s*bindcmdaddress\s+(127\.0\.0\.1|::1)' /etc/chrony/chrony.conf
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: echo 'bindcmdaddress 127.0.0.1' | sudo tee -a /etc/chrony/chrony.conf && echo 'bindcmdaddress ::1' | sudo tee -a /etc/chrony/chrony.conf
+  fix_sudo: true
+  affected_file: /etc/chrony/chrony.conf
+  post_action: 'Restart chronyd: sudo systemctl restart chronyd'
+  security_level: baseline
+  risk_level: low
+  risk_desc: Restricting the command interface prevents network exposure of the service's internal configuration.
+- id: chrony-nts-config
+  description: Verify that Network Time Security (NTS) is configured on at least one time source to cryptographically authenticate
+    the time provided.
+  command: grep -c 'nts' /etc/chrony/chrony.conf
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Add a time source that supports NTS, e.g., ''server nts.example.com iburst nts''. Consult
+    trusted NTP providers for NTS-enabled servers.'
+  fix_sudo: true
+  affected_file: /etc/chrony/chrony.conf
+  post_action: 'Restart chronyd: sudo systemctl restart chronyd'
+  security_level: high
+  risk_level: low
+  risk_desc: NTS is a client-side security feature; failure to synchronize simply reverts to unauthenticated time without
+    affecting system stability.
+
+---
+
+title: IPv6 Attack Surface Reduction
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: ipv6-accept-redirects-disabled
+  description: Disable acceptance of ICMPv6 redirects to prevent Man-in-the-Middle routing manipulation.
+  command: sysctl -n net.ipv6.conf.all.accept_redirects
+  expected: 0
+  sudo: false
+  fix: |
+    sudo tee -a /etc/sysctl.d/90-ipv6-harden.conf <<EOF
+    net.ipv6.conf.all.accept_redirects = 0
+    net.ipv6.conf.default.accept_redirects = 0
+    EOF
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-ipv6-harden.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-ipv6-harden.conf' to apply.
+  security_level: high
+  risk_level: low
+  risk_desc: Prevents unauthorized route injection via ICMPv6.
+- id: ipv6-source-route-disabled
+  description: Disable acceptance of IPv6 packets with source routing options.
+  command: sysctl -n net.ipv6.conf.all.accept_source_route
+  expected: 0
+  sudo: false
+  fix: |
+    sudo tee -a /etc/sysctl.d/90-ipv6-harden.conf <<EOF
+    net.ipv6.conf.all.accept_source_route = 0
+    net.ipv6.conf.default.accept_source_route = 0
+    EOF
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-ipv6-harden.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-ipv6-harden.conf'.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Source routing is deprecated and poses a security risk; disabling it has no operational impact.
+- id: ipv6-privacy-extensions
+  description: Verify that IPv6 Privacy Extensions (RFC 4941) are enabled.
+  command: sysctl -n net.ipv6.conf.all.use_tempaddr
+  expected: 2
+  sudo: false
+  fix: |
+    sudo tee -a /etc/sysctl.d/90-ipv6-harden.conf <<EOF
+    net.ipv6.conf.all.use_tempaddr = 2
+    net.ipv6.conf.default.use_tempaddr = 2
+    EOF
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-ipv6-harden.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-ipv6-harden.conf'.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Essential for protecting client identity by preventing hardware-based EUI-64 tracking.
+- id: ipv6-router-advertisements-restricted
+  description: Ensure the system ignores Hop Limit and other configuration flags in Router Advertisements.
+  command: sysctl -n net.ipv6.conf.all.accept_ra_pinfo
+  expected: 1
+  sudo: false
+  fix: |
+    sudo tee -a /etc/sysctl.d/90-ipv6-harden.conf <<EOF
+    net.ipv6.conf.all.accept_ra_pinfo = 1
+    net.ipv6.conf.all.accept_ra_defrtr = 1
+    EOF
+  fix_sudo: true
+  affected_file: /etc/sysctl.d/90-ipv6-harden.conf
+  post_action: Run 'sudo sysctl -p /etc/sysctl.d/90-ipv6-harden.conf'.
+  security_level: high
+  risk_level: low
+  risk_desc: Hardens the processing of RAs while maintaining basic connectivity.
+
+---
+
+title: CUPS Security Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: cups-browsed-disabled
+  description: The cups-browsed service must be disabled to prevent automatic printer discovery and reduce the attack surface.
+  command: systemctl is-enabled cups-browsed
+  expected: disabled
+  sudo: false
+  fix: sudo systemctl disable --now cups-browsed
+  fix_sudo: true
+  affected_file: /etc/systemd/system/cups-browsed.service
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Disabling this service will prevent the automatic discovery and listing of remote network printers. Users will
+    need to add printers manually if required.
+
+---
+
+title: Disable or Remove Unnecessary File Sharing Services (Samba)
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: samba-service-inactive-or-not-installed
+  description: The Samba service (smbd and nmbd) must be inactive and disabled, or not installed, to minimize the attack surface.
+  command: (systemctl is-enabled smbd 2>/dev/null; systemctl is-enabled nmbd 2>/dev/null) | grep -c '^enabled'
+  expected: 0
+  sudo: false
+  fix: systemctl disable --now smbd nmbd 2>/dev/null || true
+  fix_sudo: true
+  affected_file: N/A
+  post_action: 'Manual action required: If the service persists, remove the samba package (e.g., Debian/Ubuntu: sudo apt purge
+    samba | RHEL: sudo yum remove samba | SUSE: sudo zypper remove samba)'
+  security_level: baseline
+  risk_level: low
+  risk_desc: Disabling or removing Samba will prevent SMB/CIFS file sharing. Only disruptive if the system is intended as
+    a Windows-compatible file server.
+
+---
+
+title: DNS Resolver Security
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 64-dns-loopback-bind
+  description: Verify that local DNS resolver services are restricted to the loopback address to prevent network exposure.
+  command: |
+    sudo ss -tuln | grep -E ':53\s' | grep -vE '(127\.0\.0\.1|::1|\[::1\])' | wc -l
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Edit the configuration of your resolver (systemd-resolved or Unbound) to ensure it only listens
+    on 127.0.0.1.'
+  fix_sudo: true
+  affected_file: Resolver configuration file
+  post_action: Restart the resolver service.
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Incorrectly restricting addresses may break DNS for local virtual machines or containers.
+- id: 65-resolv-conf-perms
+  description: Ensure restrictive permissions (0644) are set on /etc/resolv.conf.
+  command: stat -c '%a' /etc/resolv.conf
+  expected: 644
+  expected_op: <=
+  sudo: false
+  fix: sudo chmod 0644 /etc/resolv.conf
+  fix_sudo: true
+  affected_file: /etc/resolv.conf
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Standard permission hardening.
+- id: 66-dns-secure-transport
+  description: Verify that the resolver uses DNS-over-TLS (DoT) or DNSSEC validation.
+  command: |
+    grep -rhE '^\s*(DNSOverTLS|DNSSEC|tls-port)\s*=\s*(yes|on|[1-9])' /etc/systemd/resolved.conf /etc/unbound/ 2>/dev/null | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Configure systemd-resolved to use DNSOverTLS=yes in /etc/systemd/resolved.conf.'
+  fix_sudo: true
+  affected_file: Resolver configuration file
+  post_action: Restart the resolver service.
+  security_level: high
+  risk_level: high
+  risk_desc: Incorrect settings will break all internet name resolution.
+
+---
+
+title: Ensure Correct Loopback and Local Host Configuration
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 67-hosts-loopback-ipv4
+  description: Verify that the IPv4 loopback address (127.0.0.1) is correctly configured for localhost.
+  command: |
+    grep -E '^\\s*127\\.0\\.0\\.1\\s+localhost' /etc/hosts | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Ensure the line ''127.0.0.1 localhost'' is present in /etc/hosts. Incorrect configuration
+    may break local inter-process communication.'
+  fix_sudo: true
+  affected_file: /etc/hosts
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Essential for local services to resolve correctly.
+- id: 68-hosts-loopback-ipv6
+  description: Verify that the IPv6 loopback address (::1) is correctly configured for localhost.
+  command: |
+    grep -E '^\\s*::1\\s+localhost' /etc/hosts | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Ensure the line ''::1 localhost'' is present in /etc/hosts.'
+  fix_sudo: true
+  affected_file: /etc/hosts
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Prevents resolution delays or failures in IPv6-enabled applications.
+- id: 69-hosts-hostname-resolution
+  description: Verify that the system hostname is correctly mapped in the hosts file.
+  command: |
+    grep -E \"^\\s*(127\\.0\\.(0|1)\\.1)\\s+$(hostname)\" /etc/hosts | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Add a line mapping 127.0.1.1 to your hostname (check via ''hostname'' command).'
+  fix_sudo: true
+  affected_file: /etc/hosts
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Ensures system tools can resolve the local hostname without external DNS.
+
+---
+
+title: Secure BIOS/UEFI Settings
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: bios-password-set
+  description: Verify that a BIOS/UEFI administrator password is set to prevent unauthorized firmware changes.
+  command: Manual verification required.
+  expected: Password is set
+  sudo: false
+  fix: 'Manual action required: Enter the BIOS/UEFI setup utility and set an Administrator Password.'
+  fix_sudo: false
+  affected_file: Firmware
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: Non-disruptive but critical for preventing firmware-level bypasses.
+- id: secure-boot-enabled
+  description: Ensure Secure Boot is enabled to maintain the cryptographic chain of trust.
+  command: sudo dmesg | grep -i "secure boot"
+  expected: Secure boot enabled
+  sudo: true
+  fix: 'Manual action required: Enter the BIOS/UEFI setup utility and enable Secure Boot.'
+  fix_sudo: false
+  affected_file: Firmware
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: May prevent booting if using unsigned custom kernels or drivers.
+- id: boot-order-restricted
+  description: Verify the boot order is restricted to the local disk to prevent external media booting.
+  command: Manual verification required.
+  expected: Local disk only
+  sudo: false
+  fix: 'Manual action required: Set the boot order to local hard disk only and disable USB/Network boot.'
+  fix_sudo: false
+  affected_file: Firmware
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: Prevents unauthorized OS loading from USB; must be temporarily reverted for recovery.
+
+---
+
+title: Secure GRUB Bootloader with a Password
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 37-fs-04-bootloader-password
+  description: Verify the bootloader requires a password for single-user mode.
+  command: |
+    grep -i '^password_pbkdf2' /boot/grub/grub.cfg | wc -l
+  expected: 1
+  sudo: true
+  fix: |
+    Manual action required: Run 'grub-mkpasswd-pbkdf2' and configure /etc/grub.d/00_header.
+  fix_sudo: false
+  affected_file: /boot/grub/grub.cfg
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Misconfiguration can render the system unbootable or lock out administrators.
+
+---
+
+title: Kernel Command Line Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: cmdline-mem-protection
+  description: Verify that security-critical kernel parameters (slab_nomerge, vsyscall, pti) are active in the boot configuration.
+  command: cat /proc/cmdline | grep -E 'slab_nomerge|vsyscall=none|pti=on' | wc -l
+  expected: 3
+  sudo: false
+  fix: 'Manual action required: Edit GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub to include these parameters and run update-grub.'
+  fix_sudo: true
+  affected_file: /etc/default/grub
+  post_action: Reboot required to apply kernel parameters.
+  security_level: high
+  risk_level: low
+  risk_desc: Improves memory protection with minimal performance impact.
+- id: initramfs-shell-disabled
+  description: Verify that the initramfs debug shell is disabled to prevent unauthorized console access.
+  command: cat /proc/cmdline | grep -E 'panic=0|rd.shell=0' | wc -l
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add ''panic=0'' (Debian/Ubuntu) or ''rd.shell=0'' (RHEL/Fedora) to the kernel command line.'
+  fix_sudo: true
+  affected_file: /etc/default/grub
+  post_action: Reboot required.
+  security_level: high
+  risk_level: medium
+  risk_desc: Prevents a bypass to a root shell, but requires live media for troubleshooting boot failures.
+
+---
+
+title: UEFI Secure Boot Verification
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: secure-boot-active
+  description: Verify that UEFI Secure Boot is enabled and active, ensuring only signed code is executed during the boot process.
+  command: mokutil --sb-state | grep -c 'SecureBoot is enabled'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Access the system''s UEFI/BIOS firmware settings and change ''Secure Boot'' from Disabled
+    to Enabled. NOTE: Ensure all boot components are signed beforehand.'
+  fix_sudo: true
+  affected_file: System Firmware/UEFI
+  post_action: None
+  security_level: baseline
+  risk_level: high
+  risk_desc: Enabling Secure Boot without using signed kernel modules or bootloaders (e.g., custom or self-compiled kernels)
+    will result in the system being unable to boot.
+- id: secure-boot-user-mode
+  description: Verify that the system is operating in User Mode (not Setup Mode) to ensure that the cryptographic keys are
+    installed and enforcing the signing policy.
+  command: 'bootctl status | grep -c ''Setup Mode: no'''
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: If in Setup Mode, the administrator must install the platform keys (PK, KEK, DB) via the firmware
+    interface or using tools like efitools and transition the system to User Mode.'
+  fix_sudo: true
+  affected_file: System Firmware/UEFI
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Setup Mode means keys are manageable but not enforced; verifying User Mode is a safety check.
+- id: kernel-sig-enforce
+  description: Verify that the kernel is enforcing module signature checks at runtime, which is required when Secure Boot
+    is active.
+  command: cat /proc/sys/kernel/module_sig_enforce
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: If this value is 0 despite Secure Boot being enabled, the kernel may be custom-built without
+    signature enforcement. Recompile the kernel with the appropriate configuration options enabled.'
+  fix_sudo: true
+  affected_file: Kernel runtime status
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: This check does not alter the system; it only verifies the security state.
+
+---
+
+title: Verify Package Integrity
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: aide-package-installed
+  description: Verify that the AIDE binary is present on the system for proactive file integrity monitoring.
+  command: command -v aide >/dev/null 2>&1 && echo 1 || echo 0
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Install AIDE (e.g., on Debian/Ubuntu: sudo apt install aide aide-common)'
+  fix_sudo: false
+  affected_file: N/A
+  post_action: Run 'sudo aideinit' to initialize the baseline database.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Installation is low risk; initialization consumes CPU/IO.
+- id: pkg-verify-checksums
+  description: Verify installed package files against original metadata (RPM/Deb/Pacman).
+  command: |
+    if command -v rpm >/dev/null; then sudo rpm -Va | grep -v '^..c' | wc -l;
+    elif command -v debsums >/dev/null; then sudo debsums -c 2>&1 | wc -l;
+    elif command -v pacman >/dev/null; then sudo pacman -Qk | grep -v '0 missing files' | wc -l;
+    else echo 0; fi
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Review identified files. If they are not intentional configuration changes, reinstall the
+    affected package.'
+  fix_sudo: false
+  affected_file: System-wide
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Manual review is mandatory; reinstallation may disrupt services.
+
+---
+
+title: Protecting Single User Mode
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: rescue-service-authentication
+  description: Ensure authentication is required when entering rescue mode (systemd).
+  command: |
+    grep -E '^ExecStart=.\*sulogin' /usr/lib/systemd/system/rescue.service /lib/systemd/system/rescue.service | wc -l
+  expected: '1'
+  sudo: false
+  fix: 'Manual action required: Create a systemd override for rescue.service to force the use of sulogin.'
+  fix_sudo: true
+  affected_file: /etc/systemd/system/rescue.service.d/override.conf
+  post_action: 'Reload systemd daemon: systemctl daemon-reload'
+  security_level: high
+  risk_level: medium
+  risk_desc: If the root password is lost or forgotten, legitimate administrators will be unable to access rescue mode to
+    recover the system without using a boot loader exploit (init=/bin/bash).
+- id: emergency-service-authentication
+  description: Ensure authentication is required when entering emergency mode (systemd).
+  command: |
+    grep -E '^ExecStart=.\*sulogin' /usr/lib/systemd/system/emergency.service /lib/systemd/system/emergency.service | wc -l
+  expected: '1'
+  sudo: false
+  fix: 'Manual action required: Create a systemd override for emergency.service to force the use of sulogin.'
+  fix_sudo: true
+  affected_file: /etc/systemd/system/emergency.service.d/override.conf
+  post_action: 'Reload systemd daemon: systemctl daemon-reload'
+  security_level: high
+  risk_level: medium
+  risk_desc: If the root password is lost, access to emergency mode will be blocked without external boot media.
+- id: legacy-sysvinit-single-mode
+  description: Ensure authentication is required for single user mode on legacy SysVinit systems (RHEL6/CentOS6 era).
+  command: if [ -f /etc/sysconfig/init ]; then grep '^SINGLE=/sbin/sulogin' /etc/sysconfig/init | wc -l; else echo 1; fi
+  expected: '1'
+  sudo: false
+  fix: Edit /etc/sysconfig/init and set SINGLE=/sbin/sulogin
+  fix_sudo: true
+  affected_file: /etc/sysconfig/init
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Only applies to legacy systems. Risk is minimal provided the root password is known.
+
+---
+
+title: Disable Ctrl-Alt-Del Reboot Sequence
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: ctrl-alt-del-masked
+  description: Verify that the Ctrl-Alt-Del reboot sequence is disabled by masking the systemd target.
+  command: systemctl status ctrl-alt-del.target | grep -q '/dev/null' && echo 1 || echo 0
+  expected: 1
+  sudo: false
+  fix: sudo ln -sf /dev/null /etc/systemd/system/ctrl-alt-del.target && sudo systemctl daemon-reload
+  fix_sudo: true
+  affected_file: /etc/systemd/system/ctrl-alt-del.target
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Prevents accidental or unauthorized reboots from the physical keyboard.
+
+---
+
+title: CPU Microcode Updates
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: auditd-package-installed
+  description: Verify that the auditd package, which provides the Linux Auditing Framework daemon, is installed on the system.
+  command: dpkg -l auditd 2>/dev/null | grep -c '^ii'
+  expected: 1
+  sudo: false
+  fix: sudo apt install auditd
+  fix_sudo: true
+  affected_file: System package list
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Installing the auditd package is a prerequisite for security monitoring and does not affect system stability.
+- id: microcode-revision-runtime
+  description: Verify that a non-zero microcode revision (indicating a successful update over the default BIOS version) is
+    loaded in the running CPU.
+  command: grep -m 1 'microcode' /proc/cpuinfo | awk '{print $NF}' | grep -c '0x[1-9a-fA-F][0-9a-fA-F]*'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: If the microcode package is installed but this check fails, ensure the initramfs/initrd was
+    updated (e.g., sudo update-initramfs -u) and the system rebooted.'
+  fix_sudo: true
+  affected_file: Kernel runtime status
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: This is a verification check and does not alter the system state.
+- id: vulnerability-mitigation-status
+  description: Verify that the system is reporting successful mitigation for critical hardware vulnerabilities, such as Spectre
+    V2, which requires microcode patches.
+  command: cat /sys/devices/system/cpu/vulnerabilities/spectre_v2 2>/dev/null | grep -c 'Mitigation:'
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Ensure the microcode package is installed, the kernel is patched, and that all kernel command
+    line parameters are correctly configured.'
+  fix_sudo: true
+  affected_file: Kernel runtime status
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: This is a verification check and relies on the kernel's ability to report mitigation status.
+
+---
+
+title: Install and Configure USBGuard
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: usbguard-service-active
+  description: Verify that the USBGuard service is installed, enabled, and running to enforce USB device policies.
+  command: systemctl is-active usbguard
+  expected: active
+  sudo: true
+  fix: 'Manual action required: Install the usbguard package if not present, then run: sudo systemctl enable --now usbguard'
+  fix_sudo: false
+  affected_file: /etc/usbguard/rules.conf
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Incorrectly configured policies can prevent input devices (keyboard, mouse) from functioning, leading to a system
+    lockout.
+- id: usbguard-policy-exists
+  description: Verify that a restrictive default policy is configured in /etc/usbguard/rules.conf.
+  command: grep -c "^block$" /etc/usbguard/rules.conf
+  expected: '1'
+  expected_op: '>='
+  sudo: true
+  fix: 'Manual action required: Establish a baseline policy allowing only authorized devices and ending with a block rule.'
+  fix_sudo: false
+  affected_file: /etc/usbguard/rules.conf
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Automatic creation of a restrictive policy may block required devices or disrupt workflows.
+
+---
+
+title: Securing the Path Environment Variable
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 80-fs-09-path-writable
+  description: Verify that standard system PATH directories are not globally writable by non-privileged users.
+  command: find /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin -type d -perm /0002 2>/dev/null | wc -l
+  expected: 0
+  sudo: false
+  fix: 'Manual action required: Identify the writable directory and remove the world-writable bit using `sudo chmod o-w <path>`.'
+  fix_sudo: true
+  affected_file: System PATH directories
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Modifying permissions on critical system directories can lead to system instability.
+
+---
+
+title: Enforce Restrictive Default Umask
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 81-fs-10-umask-login-defs
+  description: Verify that the default system-wide umask in /etc/login.defs is set to 027 or stricter.
+  command: |
+    grep -E '^\\s*UMASK\\s+0(27|77)' /etc/login.defs | wc -l
+  expected: 1
+  sudo: false
+  fix: sudo sed -i 's/^UMASK.*/UMASK 027/' /etc/login.defs
+  fix_sudo: true
+  affected_file: /etc/login.defs
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Affects newly created accounts; does not retroactively change existing user files.
+- id: 82-fs-11-umask-profile
+  description: Verify that the umask for Bourne-style shells is set to 027 or stricter in /etc/profile.
+  command: |
+    grep -E '^\\s*umask\\s+0(27|77)' /etc/profile | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: false
+  fix: 'Manual action required: Add ''umask 027'' to /etc/profile. Use conditional logic to avoid breaking root functionality
+    if necessary.'
+  fix_sudo: true
+  affected_file: /etc/profile
+  post_action: Settings take effect upon next login.
+  security_level: baseline
+  risk_level: medium
+  risk_desc: Global umask changes can lead to permission issues in shared environments or scripts.
+
+---
+
+title: Partitioning and Mount Options
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: separate-partition-tmp
+  description: Ensure /tmp is located on a separate partition to prevent resource exhaustion.
+  command: findmnt -n /tmp
+  expected: .+
+  sudo: false
+  fix: 'Manual action required: Create a separate partition for /tmp. This involves disk re-partitioning and fstab modification.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: System restart required.
+  security_level: high
+  risk_level: high
+  risk_desc: Manual partitioning carries a high risk of data loss if performed incorrectly.
+- id: mount-options-tmp
+  description: Ensure /tmp is mounted with nodev, nosuid, and noexec.
+  command: findmnt -n -k /tmp | grep -E 'nodev' | grep -E 'nosuid' | grep -E 'noexec' | wc -l
+  expected: '1'
+  sudo: false
+  fix: 'Manual action required: Edit /etc/fstab, add ''nodev,nosuid,noexec'' to /tmp options, and remount.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: mount -o remount /tmp
+  security_level: baseline
+  risk_level: medium
+  risk_desc: May break applications that require execution permission in /tmp (e.g., specific installers).
+- id: 38-fs-05-sticky-bit
+  description: Ensure the Sticky Bit is set on all world-writable directories.
+  command: find / -xdev -type d $ -perm -0002 -a ! -perm -1000 $ | wc -l
+  expected: 0
+  sudo: true
+  fix: find / -xdev -type d $ -perm -0002 -a ! -perm -1000 $ -exec chmod +t {} ;
+  fix_sudo: true
+  affected_file: Multiple Directories
+  post_action: None
+  security_level: baseline
+  arch:
+  - x86_64
+  - aarch64
+  - amd64
+  risk_level: low
+  risk_desc: Prevents users from deleting each other's files in shared directories.
+- id: mount-options-dev-shm
+  description: Ensure /dev/shm is mounted with nodev, nosuid, and noexec.
+  command: findmnt -n -k /dev/shm | grep -E 'nodev' | grep -E 'nosuid' | grep -E 'noexec' | wc -l
+  expected: '1'
+  sudo: false
+  fix: 'Manual action required: Update /etc/fstab with ''nodev,nosuid,noexec'' for the tmpfs mount.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: mount -o remount /dev/shm
+  security_level: baseline
+  risk_level: low
+  risk_desc: Minimal impact; shared memory rarely requires binary execution.
+- id: mount-options-home
+  description: Ensure /home is mounted with nodev and nosuid.
+  command: findmnt -n -k /home | grep -E 'nodev' | grep -E 'nosuid' | wc -l
+  expected: '1'
+  sudo: false
+  fix: 'Manual action required: Add ''nodev,nosuid'' to /home in /etc/fstab.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: mount -o remount /home
+  security_level: baseline
+  risk_level: low
+  risk_desc: Restricts SUID binaries in user directories.
+
+---
+
+title: Enforcing Restrictive Mount Options
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: mount-tmp-hardening
+  description: 'Verify that the /tmp filesystem is mounted with the mandatory restrictive options: nodev, nosuid, and noexec.'
+  command: findmnt -n /tmp | grep -cE 'nodev.*nosuid.*noexec'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Edit /etc/fstab and ensure the /tmp entry includes the options ''nodev,nosuid,noexec''. Then
+    run ''sudo mount -o remount /tmp''.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: Remount the filesystem (sudo mount -o remount /tmp) or reboot the system.
+  security_level: high
+  risk_level: medium
+  risk_desc: Applying 'noexec' to temporary directories can break applications or build tools that depend on executing files
+    from /tmp or /var/tmp.
+- id: mount-home-hardening
+  description: Verify that the /home filesystem (or corresponding user partition) is mounted with the 'nodev' and 'nosuid'
+    options.
+  command: findmnt -n /home | grep -cE 'nodev.*nosuid'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Edit /etc/fstab and ensure the /home entry includes the options ''nodev,nosuid''. Then run
+    ''sudo mount -o remount /home''.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: Remount the filesystem (sudo mount -o remount /home) or reboot the system.
+  security_level: baseline
+  risk_level: low
+  risk_desc: This is a standard security measure and should not affect regular user activities, only preventing malicious
+    file creation/execution.
+
+---
+
+title: Hardening the Proc Filesystem
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: proc-hidepid-configured
+  description: Verify that the /proc filesystem is configured in /etc/fstab to use the 'hidepid=2' mount option to restrict
+    process visibility.
+  command: grep -c 'proc /proc proc .*hidepid=2' /etc/fstab
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Edit /etc/fstab and ensure the /proc entry includes the mandatory option ''hidepid=2''. Then
+    run ''sudo mount -o remount /proc''.'
+  fix_sudo: true
+  affected_file: /etc/fstab
+  post_action: Remount the /proc filesystem (sudo mount -o remount /proc) or reboot the system.
+  security_level: high
+  risk_level: medium
+  risk_desc: Restricting process visibility can interfere with system monitoring tools (e.g., automated checks, centralized
+    monitoring agents) and user-facing utilities (e.g., 'ps', 'top'). Thorough testing is required.
+- id: proc-hidepid-runtime
+  description: Verify that the /proc filesystem is currently mounted with the 'hidepid=2' option enforced at runtime.
+  command: findmnt -n /proc | grep -c 'hidepid=2'
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Run ''sudo mount -o remount /proc'' to apply the setting from /etc/fstab, or reboot the system.'
+  fix_sudo: true
+  affected_file: Kernel runtime status
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: This is purely a verification check; no runtime risk is introduced.
+
+---
+
+title: Audit and Restrict SUID/SGID Executables
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: suid-sgid-file-count
+  description: Audit the number of files with the SUID or SGID permission bits set. This count must be monitored to detect
+    unauthorized changes.
+  command: sudo find / -xdev -type f -perm /06000 2>/dev/null | wc -l
+  expected: 150
+  expected_op: <=
+  sudo: true
+  fix: 'Manual action required: Review the list generated by the audit command, identify unnecessary binaries, and remove
+    the bits using ''sudo chmod u-s,g-s <file>''. WARNING: Do NOT remove SUID from essential binaries like /usr/bin/passwd
+    or /usr/bin/sudo.'
+  fix_sudo: true
+  affected_file: System executables
+  post_action: Perform functional testing of critical services (sudo, passwd, mount) to ensure required SUID binaries are
+    intact.
+  security_level: high
+  risk_level: high
+  risk_desc: Removing the SUID/SGID bit from essential system executables (e.g., 'sudo', 'mount', 'passwd') will immediately
+    break core system functionality and may lead to a loss of administrative control.
+- id: find-binary-not-suid
+  description: Verify that the 'find' utility binary itself does not have the SUID bit set, preventing potential misuse during
+    filesystem traversal.
+  command: stat -c '%a' $(which find) | grep -c '4'
+  expected: 0
+  sudo: false
+  fix: sudo chmod u-s $(which find)
+  fix_sudo: true
+  affected_file: /usr/bin/find
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Removing the SUID bit from the 'find' utility is a standard security measure and should not affect its normal
+    function.
+
+---
+
+title: World Writable File and Directory Audit
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 83-fs-12-audit-world-writable-files
+  description: Audit regular files with the world-writable bit set to prevent unauthorized modification.
+  command: sudo find / -xdev -type f -perm -0002 2>/dev/null | wc -l
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Remove the world-writable bit using `sudo chmod o-w <file>` after verifying the file purpose.'
+  fix_sudo: true
+  affected_file: System files
+  post_action: None.
+  security_level: high
+  risk_level: low
+  risk_desc: Standard files should never be world-writable; remediation secures system integrity.
+- id: 84-fs-13-audit-world-writable-directories
+  description: Audit directories (excluding temporary paths) that are writable by the world.
+  command: sudo find / -xdev -type d -perm -0002 -not -path '/tmp' -not -path '/var/tmp' -not -path '/dev/shm' 2>/dev/null
+    | wc -l
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Remove the world-writable bit using `sudo chmod o-w <directory>`.'
+  fix_sudo: true
+  affected_file: System directories
+  post_action: None.
+  security_level: high
+  risk_level: low
+  risk_desc: Misconfigured directories can allow attackers to plant malicious scripts.
+
+---
+
+title: Audit and Remediate Unowned and Ungrouped Files
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: audit-files-no-user
+  description: Audit all files on local filesystems that are owned by a numeric UID not defined in /etc/passwd (no valid user).
+  command: sudo find / -xdev -nouser 2>/dev/null | wc -l
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Review the files and either delete the obsolete files or reassign ownership to a valid system
+    user, e.g., ''sudo chown root <file>'''
+  fix_sudo: true
+  affected_file: Filesystem metadata
+  post_action: None. This is a housekeeping task.
+  security_level: baseline
+  risk_level: low
+  risk_desc: This remediation is a low-risk integrity cleanup that prevents UID reassignment from granting unauthorized ownership.
+- id: audit-files-no-group
+  description: Audit all files on local filesystems that are owned by a numeric GID not defined in /etc/group (no valid group).
+  command: sudo find / -xdev -nogroup 2>/dev/null | wc -l
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Review the files and either delete the obsolete files or reassign group ownership to a valid
+    system group, e.g., ''sudo chgrp root <file>'''
+  fix_sudo: true
+  affected_file: Filesystem metadata
+  post_action: None. This is a housekeeping task.
+  security_level: baseline
+  risk_level: low
+  risk_desc: This remediation is a low-risk integrity cleanup.
+
+---
+
+title: Polyinstantiation of Temporary Directories
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: pam-namespace-active
+  description: Verify that the pam_namespace.so module is active in the session stack for local logins to initiate directory
+    isolation.
+  command: |
+    grep -cE '^\s*session\s+required\s+pam_namespace.so' /etc/pam.d/login
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add the line ''session required pam_namespace.so'' to the session stack in /etc/pam.d/login
+    and /etc/pam.d/sshd.'
+  fix_sudo: true
+  affected_file: /etc/pam.d/login
+  post_action: None. Users must log out and log back in for changes to apply.
+  security_level: high
+  risk_level: medium
+  risk_desc: Incorrect placement of the pam_namespace.so module in the PAM stack can cause login failures, potentially locking
+    out users if not thoroughly tested.
+- id: tmp-polyinstantiation-config
+  description: Verify that /tmp and /var/tmp are configured for user-based polyinstantiation in /etc/security/namespace.conf.
+  command: |
+    grep -cE '^/tmp\\s+tmpfs\\s+user\\s+create' /etc/security/namespace.conf
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add the required polyinstantiation lines to /etc/security/namespace.conf for /tmp and /var/tmp.'
+  fix_sudo: true
+  affected_file: /etc/security/namespace.conf
+  post_action: None.
+  security_level: high
+  risk_level: high
+  risk_desc: This feature can break applications that rely on a globally shared /tmp for inter-process communication (IPC)
+    between different user sessions or services.
+
+---
+
+title: Audit Framework Installation and Setup
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: auditd-package-installed
+  description: Verify that the auditd daemon binary is present, providing the Linux Auditing Framework.
+  command: command -v auditd >/dev/null 2>&1 && echo 1 || echo 0
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Install auditd (e.g., on Debian/Ubuntu: sudo apt install auditd | on RHEL: sudo dnf install
+    audit)'
+  fix_sudo: false
+  affected_file: N/A
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Installing auditd is a prerequisite for security monitoring and does not affect system stability.
+- id: auditd-service-enabled
+  description: Verify that the auditd service is enabled to ensure that the auditing framework starts automatically upon system
+    boot.
+  command: systemctl is-enabled auditd
+  expected: enabled
+  sudo: false
+  fix: sudo systemctl enable auditd
+  fix_sudo: true
+  affected_file: System service configuration
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Enabling the service is essential for persistent security monitoring and poses a minimal risk.
+- id: auditd-service-active
+  description: Verify that the auditd service is currently running actively to ensure continuous security event logging.
+  command: systemctl is-active auditd
+  expected: active
+  sudo: false
+  fix: sudo systemctl start auditd
+  fix_sudo: true
+  affected_file: System service runtime
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Starting the service introduces a slight performance overhead, but the security benefits are mandatory.
+
+---
+
+title: Audit Rules for Identity and Privilege Escalation
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: audit-identity-file-changes
+  description: Verify rules exist to monitor all write and attribute changes to critical identity files (/etc/passwd, /etc/shadow,
+    /etc/sudoers).
+  command: |
+    grep -cE '^\s*-w\s+/etc/shadow\s+-p\s+wa' /etc/audit/rules.d/*.rules
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add rules to monitor all critical identity files for write access (wa). See text for full
+    list of mandatory rules.'
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/90-identity.rules
+  post_action: |
+    Run 'sudo auditctl -R' to load the new ruleset immediately.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Incorrect audit rules may fail to log critical events, but will not affect system stability.
+- id: audit-privilege-executables
+  description: Verify rules exist to monitor the successful execution of privilege escalation binaries (su and sudo).
+  command: |
+    grep -cE '^\s*-a\s+always,exit\s+-F\s+path=/usr/bin/su' /etc/audit/rules.d/*.rules
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add execution monitoring rules for /usr/bin/su and /usr/bin/sudo.'
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/90-identity.rules
+  post_action: |
+    Run 'sudo auditctl -R' to load the new ruleset immediately.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Monitoring execution of binaries is low risk, but failure to monitor may allow an attacker to escalate privileges
+    without detection.
+
+---
+
+title: Audit Rules for System Integrity and File Access
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: audit-file-attribute-changes
+  description: Verify rules exist to monitor critical syscalls that modify file permissions and ownership (e.g., chmod, chown).
+  command: |
+    grep -cE '^\s*-a\s+always,exit\s+-S\s+chmod' /etc/audit/rules.d/*.rules
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add the mandatory syscall rules for file attribute changes. See text for full list of syscalls.'
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/91-system-access.rules
+  post_action: |
+    Run 'sudo auditctl -R' to load the new ruleset immediately.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Monitoring file access syscalls is essential for detecting tampering and poses a negligible performance risk.
+- id: audit-file-deletion-activity
+  description: Verify rules exist to monitor syscalls related to file and directory deletion (e.g., unlink, rmdir) across
+    the filesystem.
+  command: |
+    grep -cE '^\s*-a\s+always,exit\s+-S\s+unlink' /etc/audit/rules.d/*.rules
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add the mandatory syscall rules for file deletion/renaming.'
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/91-system-access.rules
+  post_action: |
+    Run 'sudo auditctl -R' to load the new ruleset immediately.
+  security_level: baseline
+  risk_level: low
+  risk_desc: This monitoring is essential for forensic analysis after a file integrity violation.
+- id: audit-kernel-module-loading
+  description: Verify rules exist to monitor kernel integrity by logging attempts to load or unload kernel modules (init_module,
+    delete_module).
+  command: |
+    grep -cE '^\s*-a\s+always,exit\s+-S\s+init_module' /etc/audit/rules.d/*.rules
+  expected: 1
+  sudo: false
+  fix: 'Manual action required: Add the syscall rules for kernel module management.'
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/91-system-access.rules
+  post_action: |
+    Run 'sudo auditctl -R' to load the new ruleset immediately.
+  security_level: high
+  risk_level: low
+  risk_desc: Monitoring kernel module activity is critical for detecting rootkits and poses zero performance overhead.
+
+---
+
+title: Enforcing Immutable Audit Configuration
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: audit-immutable-rule-config
+  description: Verify that the mandatory rule to set the audit configuration to immutable is the last line in the ruleset.
+  command: sudo tail -n 1 /etc/audit/rules.d/99-finalize.rules 2>/dev/null | grep -c '^-e 2'
+  expected: 1
+  sudo: true
+  fix: echo '-e 2' | sudo tee /etc/audit/rules.d/99-finalize.rules
+  fix_sudo: true
+  affected_file: /etc/audit/rules.d/99-finalize.rules
+  post_action: A system reboot is MANDATORY to load the immutable rule and lock the configuration.
+  security_level: high
+  risk_level: high
+  risk_desc: Once set to immutable, the audit rules cannot be changed or cleared without a system reboot. This creates a risk
+    if the ruleset is flawed and causes a Denial of Service (DoS) due to excessive logging.
+- id: audit-immutable-mode-runtime
+  description: Verify that the kernel's audit system is currently operating in immutable mode, preventing runtime tampering.
+  command: sudo auditctl -s | grep -c 'enabled 2'
+  expected: 1
+  sudo: true
+  fix: 'Manual action required: Reboot the system to ensure the immutable rule is loaded by the auditd service.'
+  fix_sudo: true
+  affected_file: Kernel runtime status
+  post_action: None
+  security_level: high
+  risk_level: low
+  risk_desc: This is purely a verification check for the most critical audit security feature.
+
+---
+
+title: Syslog Daemon Hardening
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: syslog-network-disabled
+  description: Verify that the syslog daemon (e.g., rsyslog) is not listening on network ports (UDP 514, TCP 601) unless explicitly
+    configured as a log collector.
+  command: sudo netstat -tuln | grep -cE '514|601'
+  expected: 0
+  sudo: true
+  fix: 'Manual action required: Comment out or remove network receiver module directives (e.g., $ModLoad imudp, $ModLoad imtcp)
+    from /etc/rsyslog.conf or equivalent configuration file. Then restart the service.'
+  fix_sudo: true
+  affected_file: /etc/rsyslog.conf
+  post_action: Restart the syslog daemon (e.g., sudo systemctl restart rsyslog).
+  security_level: baseline
+  risk_level: low
+  risk_desc: Disabling network listening reduces attack surface and does not impact local logging functionality.
+- id: syslog-critical-file-permissions
+  description: Verify that critical security log files (e.g., /var/log/auth.log) have restrictive permissions (0640 or tighter)
+    to protect confidentiality.
+  command: stat -c '%a' /var/log/auth.log 2>/dev/null
+  expected: 640
+  expected_op: <=
+  sudo: false
+  fix: sudo chmod 0640 /var/log/auth.log
+  fix_sudo: true
+  affected_file: /var/log/auth.log
+  post_action: None.
+  security_level: high
+  risk_level: low
+  risk_desc: Restricting read access to log files is a corrective security measure that does not affect system stability.
+- id: syslog-dir-permissions
+  description: Verify that the primary log directory /var/log has restrictive permissions (0755 or tighter) to prevent unauthorized
+    file creation or directory modification.
+  command: stat -c '%a' /var/log
+  expected: 755
+  expected_op: <=
+  sudo: false
+  fix: sudo chmod 0755 /var/log
+  fix_sudo: true
+  affected_file: /var/log
+  post_action: None.
+  security_level: baseline
+  risk_level: low
+  risk_desc: This is a standard file permission hardening measure.
+
+---
+
+title: Systemd Journal Hardening and Integrity
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: journald-persistent-storage
+  description: Verify that journal storage is set to 'persistent' to retain forensic logs across reboots.
+  command: grep -E '^Storage=' /etc/systemd/journald.conf | awk -F= '{print $2}' | tr -d '[:space:]'
+  expected: persistent
+  sudo: false
+  fix: |
+    sudo sed -i 's/^#\\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
+  fix_sudo: true
+  affected_file: /etc/systemd/journald.conf
+  post_action: 'Restart journald: sudo systemctl restart systemd-journald'
+  security_level: baseline
+  risk_level: low
+  risk_desc: Changing storage creates the /var/log/journal directory, which is necessary for forensic integrity.
+- id: journald-compression-enabled
+  description: Verify that log compression is enabled for efficient disk space management.
+  command: grep -E '^Compress=' /etc/systemd/journald.conf | awk -F= '{print $2}' | tr -d '[:space:]'
+  expected: 'yes'
+  sudo: false
+  fix: |
+    sudo sed -i 's/^#\\?Compress=.*/Compress=yes/' /etc/systemd/journald.conf
+  fix_sudo: true
+  affected_file: /etc/systemd/journald.conf
+  post_action: 'Restart journald: sudo systemctl restart systemd-journald'
+  security_level: baseline
+  risk_level: low
+  risk_desc: Compression saves disk space and does not affect log integrity.
+- id: journald-persistent-dir-perms
+  description: Verify that the persistent journal directory (/var/log/journal) has restrictive permissions (e.g., 2755) and
+    the SetGID bit set.
+  command: stat -c '%a' /var/log/journal 2>/dev/null
+  expected: 2755
+  expected_op: <=
+  sudo: false
+  fix: sudo chmod 2755 /var/log/journal
+  fix_sudo: true
+  affected_file: /var/log/journal
+  post_action: None.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Incorrect permissions could expose sensitive log data to local users, but the fix is a standard corrective measure.
+
+---
+
+title: Cron Security
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: cron_only_root_allowed
+  description: Ensure that only the root user is allowed to schedule cron jobs by using a restrictive /etc/cron.allow file.
+  command: grep -q "^root$" /etc/cron.allow && [ \! -f /etc/cron.deny ]
+  expected: '0'
+  sudo: true
+  fix: rm -f /etc/cron.deny; echo "root" \> /etc/cron.allow; chmod 0640 /etc/cron.allow; chown root:root /etc/cron.allow
+  fix_sudo: true
+  affected_file: /etc/cron.allow
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Restricting cron access to only root may prevent legitimate, non-privileged users from scheduling necessary tasks.
+    These users will need to request that root or an authorized admin set up the job.
+- id: at_only_root_allowed
+  description: Ensure that only the root user is allowed to schedule at jobs by using a restrictive /etc/at.allow file.
+  command: grep -q "^root$" /etc/at.allow && [ \! -f /etc/at.deny ]
+  expected: '0'
+  sudo: true
+  fix: rm -f /etc/at.deny; echo "root" \> /etc/at.allow; chmod 0640 /etc/at.allow; chown root:root /etc/at.allow
+  fix_sudo: true
+  affected_file: /etc/at.allow
+  post_action: None
+  security_level: baseline
+  risk_level: low
+  risk_desc: Restricting 'at' access to only root may prevent legitimate, non-privileged users from scheduling necessary one-time
+    tasks. These users will need to request admin assistance.
+
+---
+
+title: Systemd Service Sandboxing and Resource Control
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: systemd-protect-system
+  description: Verify that critical services are configured with ProtectSystem=strict to prevent them from modifying core
+    OS directories.
+  command: sudo grep -rh 'ProtectSystem=strict' /etc/systemd/system/ /lib/systemd/system/ 2>/dev/null | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: true
+  fix: 'Manual action required: Create a service override file and add ProtectSystem=strict.'
+  fix_sudo: true
+  affected_file: /etc/systemd/system/*.service.d/*.conf
+  post_action: Run `sudo systemctl daemon-reload` and restart the affected service.
+  security_level: high
+  risk_level: medium
+  risk_desc: This setting can break services that require write access to configuration in /usr or /etc.
+- id: systemd-protect-home
+  description: Verify that critical services are configured with ProtectHome=yes to prevent access to user data.
+  command: sudo grep -rh 'ProtectHome=yes' /etc/systemd/system/ /lib/systemd/system/ 2>/dev/null | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: true
+  fix: 'Manual action required: Create a service override file and add ProtectHome=yes.'
+  fix_sudo: true
+  affected_file: /etc/systemd/system/*.service.d/*.conf
+  post_action: Run `sudo systemctl daemon-reload` and restart the affected service.
+  security_level: high
+  risk_level: low
+  risk_desc: Safe for most services unless they are designed to interact with user files.
+- id: systemd-private-tmp
+  description: Verify that critical services are configured with PrivateTmp=true to isolate temporary files.
+  command: sudo grep -rh 'PrivateTmp=true' /etc/systemd/system/ /lib/systemd/system/ 2>/dev/null | wc -l
+  expected: 1
+  expected_op: '>='
+  sudo: true
+  fix: 'Manual action required: Create a service override file and add PrivateTmp=true.'
+  fix_sudo: true
+  affected_file: /etc/systemd/system/*.service.d/*.conf
+  post_action: Run `sudo systemctl daemon-reload` and restart the affected service.
+  security_level: baseline
+  risk_level: low
+  risk_desc: Isolates /tmp to prevent inter-process information leakage.
+
+---
+
+title: Mandatory Access Control (MAC) Implementation
+os: linux
+arch:
+- amd64
+- arm64
+preconditions:
+  tools:
+  - grep
+  - awk
+  - sed
+  - systemctl
+checksuites:
+- id: 85-mac-01-selinux-enforcing
+  description: Verify that SELinux is set to enforcing mode on supported systems (Fedora/RHEL).
+  command: if command -v getenforce >/dev/null; then getenforce; else echo 'Enforcing'; fi
+  expected: Enforcing
+  sudo: false
+  fix: 'Manual action required: Set `SELINUX=enforcing` in `/etc/selinux/config` and reboot.'
+  fix_sudo: true
+  affected_file: /etc/selinux/config
+  post_action: None
+  security_level: high
+  risk_level: high
+  risk_desc: Switching from disabled to enforcing may require a filesystem relabel, which takes time during boot.
+- id: 86-mac-02-apparmor-active
+  description: Verify that AppArmor is active and profiles are enforced (Ubuntu/Debian/Arch/SUSE).
+  command: if command -v aa-status >/dev/null; then sudo aa-status | grep -q 'profiles are in enforce mode' && echo 'active'
+    || echo 'inactive'; else echo 'active'; fi
+  expected: active
+  sudo: true
+  fix: sudo systemctl enable --now apparmor
+  fix_sudo: true
+  affected_file: /etc/apparmor.d/
+  post_action: None
+  security_level: high
+  risk_level: medium
+  risk_desc: Enabling AppArmor might block non-standard applications until a profile is created.
