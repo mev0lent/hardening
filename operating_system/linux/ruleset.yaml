@@ -1,14 +1,17 @@
-title: Harden Administrative Accounts
-os: linux
-arch:
-- amd64
-- arm64
 preconditions:
   tools:
   - grep
   - awk
   - sed
   - systemctl
+
+---
+
+title: Harden Administrative Accounts
+os: linux
+arch:
+- amd64
+- arm64
 checksuites:
 - id: unique-uid-zero
   description: Verify that 'root' is the only account with UID 0 to prevent unauthorized superuser access.
@@ -45,12 +48,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: passwords-shadowed
   description: Verify that all accounts in /etc/passwd have an 'x' in the password field, indicating hashes are stored in
@@ -75,12 +72,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 39-auth-01-pass-encryption
   description: Ensure passwords use SHA512 or better hashing to protect against offline cracking.
@@ -102,12 +93,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: pam-stack-integration
   description: Verify that the pam_pwquality module is actually active in the PAM stack.
@@ -158,12 +143,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: faillock-unlock-time
   description: Verify that the account lockout duration is at least 180 seconds.
@@ -185,12 +164,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 41-auth-03-pass-lifetime
   description: Verify that password maximum age is set to disable legacy rotation (99999 days) in /etc/login.defs.
@@ -236,12 +209,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 67-auth-15-pam-securetty
   description: Ensure pam_securetty.so is enabled to restrict root logins to specific terminals.
@@ -278,12 +245,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: use-pty
   description: Ensure that a pseudo-terminal (PTY) is allocated for all sudo commands to prevent input hijacking and ensure
@@ -347,12 +308,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: shell-timeout
   description: Verify that the TMOUT variable is set to 300 seconds or less in global profile configurations.
@@ -400,12 +355,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 40-auth-02-pass-complexity
   description: Ensure password complexity is enforced (minlen=14).
@@ -442,12 +391,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: pkg-purge-insecure
   description: Verify that legacy insecure protocol binaries (rsh, telnetd, vsftpd, tftpd) are not present on the system.
@@ -509,12 +452,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: firewall-active
   description: Verify that a host-based firewall is active and enabled (UFW on Debian/Ubuntu/Arch, firewalld on Rocky/Fedora/OpenSUSE).
@@ -563,12 +500,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: ssh-server-removed
   description: Ensure the SSH server daemon is not installed to close the remote access attack surface.
@@ -602,12 +533,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 14-kernel-01-dmesg-restrict
   description: Restrict access to the kernel message buffer (dmesg) to root only to prevent information leakage.
@@ -905,12 +830,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: hosts-deny-all
   description: 'Enforce a ''Default Deny'' policy by ensuring /etc/hosts.deny contains ''ALL: ALL''. This ensures that only
@@ -968,12 +887,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: chronyd-active
   description: Verify that a time synchronization service (chrony or systemd-timesyncd) is actively running to ensure accurate
@@ -1042,12 +955,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: ipv6-accept-redirects-disabled
   description: Disable acceptance of ICMPv6 redirects to prevent Man-in-the-Middle routing manipulation.
@@ -1121,12 +1028,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: cups-browsed-disabled
   description: The cups-browsed service must be disabled to prevent automatic printer discovery and reduce the attack surface.
@@ -1149,12 +1050,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: samba-service-inactive-or-not-installed
   description: The Samba service (smbd and nmbd) must be inactive and disabled, or not installed, to minimize the attack surface.
@@ -1178,12 +1073,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 64-dns-loopback-bind
   description: Verify that local DNS resolver services are restricted to the loopback address to prevent network exposure.
@@ -1234,12 +1123,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 67-hosts-loopback-ipv4
   description: Verify that the IPv4 loopback address (127.0.0.1) is correctly configured for localhost.
@@ -1292,12 +1175,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: bios-password-set
   description: Verify that a BIOS/UEFI administrator password is set to prevent unauthorized firmware changes.
@@ -1343,12 +1220,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 37-fs-04-bootloader-password
   description: Verify the bootloader requires a password for single-user mode.
@@ -1372,12 +1243,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: cmdline-mem-protection
   description: Verify that security-critical kernel parameters (slab_nomerge, vsyscall, pti) are active in the boot configuration.
@@ -1411,12 +1276,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: secure-boot-active
   description: Verify that UEFI Secure Boot is enabled and active, ensuring only signed code is executed during the boot process.
@@ -1468,12 +1327,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: aide-package-installed
   description: Verify that the AIDE binary is present on the system for proactive file integrity monitoring.
@@ -1512,12 +1365,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: rescue-service-authentication
   description: Ensure authentication is required when entering rescue mode (systemd).
@@ -1566,12 +1413,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: ctrl-alt-del-masked
   description: Verify that the Ctrl-Alt-Del reboot sequence is disabled by masking the systemd target.
@@ -1593,12 +1434,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: auditd-package-installed
   description: Verify that the auditd package, which provides the Linux Auditing Framework daemon, is installed on the system.
@@ -1649,12 +1484,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: usbguard-service-active
   description: Verify that the USBGuard service is installed, enabled, and running to enforce USB device policies.
@@ -1690,12 +1519,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 80-fs-09-path-writable
   description: Verify that standard system PATH directories are not globally writable by non-privileged users.
@@ -1717,12 +1540,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 81-fs-10-umask-login-defs
   description: Verify that the default system-wide umask in /etc/login.defs is set to 027 or stricter.
@@ -1760,12 +1577,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: separate-partition-tmp
   description: Ensure /tmp is located on a separate partition to prevent resource exhaustion.
@@ -1801,10 +1612,6 @@ checksuites:
   affected_file: Multiple Directories
   post_action: None
   security_level: baseline
-  arch:
-  - x86_64
-  - aarch64
-  - amd64
   risk_level: low
   risk_desc: Prevents users from deleting each other's files in shared directories.
 - id: mount-options-dev-shm
@@ -1839,12 +1646,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: mount-tmp-hardening
   description: 'Verify that the /tmp filesystem is mounted with the mandatory restrictive options: nodev, nosuid, and noexec.'
@@ -1883,12 +1684,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: proc-hidepid-configured
   description: Verify that the /proc filesystem is configured in /etc/fstab to use the 'hidepid=2' mount option to restrict
@@ -1925,12 +1720,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: suid-sgid-file-count
   description: Audit the number of files with the SUID or SGID permission bits set. This count must be monitored to detect
@@ -1972,12 +1761,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 83-fs-12-audit-world-writable-files
   description: Audit regular files with the world-writable bit set to prevent unauthorized modification.
@@ -2012,12 +1795,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: audit-files-no-user
   description: Audit all files on local filesystems that are owned by a numeric UID not defined in /etc/passwd (no valid user).
@@ -2053,12 +1830,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: pam-namespace-active
   description: Verify that the pam_namespace.so module is active in the session stack for local logins to initiate directory
@@ -2098,12 +1869,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: auditd-package-installed
   description: Verify that the auditd daemon binary is present, providing the Linux Auditing Framework.
@@ -2151,12 +1916,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: audit-identity-file-changes
   description: Verify rules exist to monitor all write and attribute changes to critical identity files (/etc/passwd, /etc/shadow,
@@ -2197,12 +1956,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: audit-file-attribute-changes
   description: Verify rules exist to monitor critical syscalls that modify file permissions and ownership (e.g., chmod, chown).
@@ -2256,12 +2009,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: audit-immutable-rule-config
   description: Verify that the mandatory rule to set the audit configuration to immutable is the last line in the ruleset.
@@ -2296,12 +2043,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: syslog-network-disabled
   description: Verify that the syslog daemon (e.g., rsyslog) is not listening on network ports (UDP 514, TCP 601) unless explicitly
@@ -2353,12 +2094,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: journald-persistent-storage
   description: Verify that journal storage is set to 'persistent' to retain forensic logs across reboots.
@@ -2408,12 +2143,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: cron_only_root_allowed
   description: Ensure that only the root user is allowed to schedule cron jobs by using a restrictive /etc/cron.allow file.
@@ -2449,12 +2178,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: systemd-protect-system
   description: Verify that critical services are configured with ProtectSystem=strict to prevent them from modifying core
@@ -2504,12 +2227,6 @@ os: linux
 arch:
 - amd64
 - arm64
-preconditions:
-  tools:
-  - grep
-  - awk
-  - sed
-  - systemctl
 checksuites:
 - id: 85-mac-01-selinux-enforcing
   description: Verify that SELinux is set to enforcing mode on supported systems (Fedora/RHEL).
