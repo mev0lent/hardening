@@ -2475,12 +2475,17 @@ Applications such as Google Chrome or Firefox use a hybrid sandbox design where 
 
 ```
 > pgrep -fl "Google Chrome Helper"
+98269 [...] Google Chrome Helper --type=gpu-process [...] --seatbelt-client=20
+98270 [...] Google Chrome Helper --type=utility [...] --service-sandbox-type=network [...] --seatbelt-client=20
+98271 [...] Google Chrome Helper --type=utility [...] --service-sandbox-type=service [...] --seatbelt-client=37
 ```
 
-3. Use `launchctl procinfo` on a child process PID to verify its sandbox state:
+> **Note:** The `--seatbelt-client=<fd>` argument on each child process indicates the file descriptor for the Seatbelt sandbox profile passed at launch, confirming the runtime sandbox mechanism is active.
+
+3. Use `launchctl procinfo` on a child process PID to verify its sandbox state. This command requires root privileges:
 
 ```
-> launchctl procinfo <child-PID> | grep "sandboxed"
+> sudo launchctl procinfo <child-PID> | grep -i sandbox
 sandboxed = probably
 ```
 
@@ -2494,29 +2499,25 @@ All notarized applications (required for distribution outside the MAS since macO
 
 ```
 > codesign --display --verbose /Applications/Google\ Chrome.app
+Executable=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+Identifier=com.google.Chrome
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=893 flags=0x12a00(kill,restrict,library-validation,runtime) hashes=17+7 location=embedded
+Signature size=8990
+[...]
 ```
 
-The output MUST contain the `runtime` flag:
-
-```
-CodeDirectory v=20400 size=... flags=0x10000(runtime) ...
-```
-
-The `flags=0x...(runtime)` confirms that the Hardened Runtime is enabled.
+The `flags` field MUST contain `runtime`. For example, `flags=0x12a00(kill,restrict,library-validation,runtime)` confirms that the Hardened Runtime is enabled alongside additional protections.
 
 ###### Audit of Sandbox Exceptions
 
 Merely having the App Sandbox enabled is not sufficient if the application requests broad exceptions that punch holes in the container. Applications with the static `com.apple.security.app-sandbox` entitlement SHOULD be audited for excessive exceptions.
 
-Run the check for the application in question:
+Run the check for the application in question. The following example shows an analysis of Microsoft Teams, which acts as a negative example due to the extensive list of exceptions and entitlements required for its operation (e.g., JIT compilation, direct access to specific sockets, or broad file system access):
 
 ```
 > codesign --display --entitlements - /Applications/Microsoft\ Teams.app
-```
 
-The output reveals a "noisy" entitlement list. Note the specific exceptions that weaken the hardening status, such as allowed unsigned executable memory (often used for Electron apps) or specific file paths outside the container:
-
-```
 Executable=/Applications/Microsoft Teams.app/Contents/MacOS/MSTeams
 [Dict]
     [Key] com.apple.application-identifier
@@ -2542,29 +2543,93 @@ Executable=/Applications/Microsoft Teams.app/Contents/MacOS/MSTeams
         [Array]
             [String] UBF8T346G9.com.microsoft.teams
             [String] UBF8T346G9.com.microsoft.oneauth
-    [Key] com.apple.security.cs.allow-unsigned-executable-memory
+            [String] UBF8T346G9.com.microsoft.entrabroker
+    [Key] com.apple.security.cs.allow-jit
     [Value]
         [Bool] true
-
-    [...]
-
+    [Key] com.apple.security.device.audio-input
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.device.bluetooth
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.device.camera
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.device.microphone
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.device.print
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.device.usb
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.files.bookmarks.app-scope
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.files.downloads.read-write
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.files.user-selected.read-write
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.network.client
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.network.server
+    [Value]
+        [Bool] true
     [Key] com.apple.security.personal-information.location
-
-    [...]
-
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.print
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.temporary-exception.sbpl
+    [Value]
+        [Array]
+            [String] (allow mach-lookup (global-name "com.apple.mdmclient.daemon.unrestricted"))
+            [String] (allow mach-lookup (global-name "com.apple.ReportCrash"))
+            [String] (allow ipc-posix-sem* (ipc-posix-name-prefix "/Smartscreen-anaheim"))
+            [String] (allow mach-register mach-lookup (global-name-prefix "com.microsoft.edgemac.mojo"))
+            [String] (allow mach-register mach-lookup (global-name-prefix "org.chromium.crashpad.child_port_handshake"))
+            [String] (allow mach-register mach-lookup (global-name-prefix "com.microsoft.teams2.helper.local.MachPortRendezvousServer"))
+            [String] (allow mach-register mach-lookup (global-name-prefix "com.microsoft.teams2.helper.MachPortRendezvousServer"))
+            [String] (allow mach-register mach-lookup (global-name-prefix "mach.streamrender"))
             [String] (allow file-read* file-write* (subpath "/dev/fd"))
             [String] (allow file-read* file-write* (subpath "/private/var/folders"))
             [String] (allow file-read* file-write* (subpath "/usr/local/var/run/lldpd.socket"))
-            [String] (allow file-read* file-write* (literal "/private/var/run/com.microsoft.teams2.migrationtool.ctl"))
-
-            [...]
+            [String] (allow file-read* (subpath "/Library/Logs/DiagnosticReports"))
+            [String] (allow file-read* (subpath "/Library/Logs/Microsoft/MSTeams"))
+            [String] (allow file-read* (home-subpath "/Library/Logs/DiagnosticReports"))
+            [String] (allow user-preference-read (preference-domain "com.apple.mdmclient"))
+            [String] (allow user-preference-read (preference-domain "com.apple.SystemConfiguration"))
+            [String] (allow user-preference* (preference-domain "com.microsoft.teams2.defaults"))
+            [String] (allow user-preference* (preference-domain "com.microsoft.teams2.helper"))
+            [String] (allow user-preference* (preference-domain "com.microsoft.autoupdate2"))
+            [String] (allow user-preference-read (preference-domain "com.microsoft.office"))
+            [String] (allow user-preference-read (preference-domain "com.microsoft.teams"))
+            [String] (allow network* (remote unix))
+            [String] (allow network-outbound (subpath "/usr/local/var/run/lldpd.socket"))
+            [String] (allow process-exec* (literal "/Library/Application Support/Microsoft/MAU2.0/Microsoft AutoUpdate.app/Contents/MacOS/msupdate"))
+            [String] (allow mach-lookup (global-name "com.microsoft.update.xpc"))
+            [String] (allow distributed-notification-post)
+            [String] (allow job-creation)
+            [String] (allow iokit-open (iokit-registry-entry-class-prefix "AppleSMC"))
+            [String] (allow file-read-metadata (literal "/Library/Caches/com.microsoft.autoupdate.helper/Clones.noindex"))
+            [String] (allow file-read-xattr file-write-xattr (xattr "com.apple.quarantine"))
+    [Key] keychain-access-groups
+    [Value]
+        [Array]
+            [String] UBF8T346G9.com.microsoft.identity.universalstorage
 ```
 
 ###### Implementation
 
 If an application is found to be running without any form of sandboxing (neither the static entitlement nor runtime sandbox enforcement) or with excessive, unjustified exceptions:
 
-1. **Identify:** Run the `codesign` entitlement check and, if the static entitlement is absent, verify runtime sandboxing via `launchctl procinfo` or Activity Monitor.
+1. **Identify:** Run the `codesign` entitlement check and, if the static entitlement is absent, verify runtime sandboxing via `sudo launchctl procinfo` or Activity Monitor.
 2. **Replace:** Prefer downloading the application from the Mac App Store (MAS), as Apple mandates stricter sandboxing for all MAS submissions.
 3. **Mitigate:** If a business-critical application requires broad exceptions (like Teams) or uses runtime sandboxing without the static entitlement (like Chrome), ensure it is kept strictly up-to-date to minimize the risk of the weakened or non-standard sandbox being exploited.
 4. **Verify Hardened Runtime:** As a baseline, all applications MUST at minimum have the Hardened Runtime enabled (`flags=0x...(runtime)`), regardless of their sandboxing approach.
