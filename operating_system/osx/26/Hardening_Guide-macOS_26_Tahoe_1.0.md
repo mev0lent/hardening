@@ -2431,86 +2431,143 @@ If the checks above fail (e.g., file not found):
 
 ## Application Sandboxing
 
-Application Sandboxing is a mandatory security feature that restricts the resources an application can access. When an application is sandboxed, it is confined to a specific container (its “sandbox”) and only allowed to access files, network services, and peripherals through explicit entitlements granted by the operating system.
+Application Sandboxing is a security mechanism that restricts the resources an application can access. When an application is sandboxed, it is confined to a specific container (its "sandbox") and only allowed to access files, network services, and peripherals through explicit entitlements granted by the operating system.
 
 ###### Description
 
-Running applications without the sandbox entitlement is highly dangerous, as a compromised application could gain unrestricted access to the user’s sensitive files, SSH keys, and the entire file system outside the application’s immediate control.
+Running applications without any form of sandboxing is highly dangerous, as a compromised application could gain unrestricted access to the user's sensitive files, SSH keys, and the entire file system outside the application's immediate control.
 
-All critical corporate applications (e.g., browsers, email clients, communication tools) MUST possess the mandatory `com.apple.security.app-sandbox` entitlement. Applications downloaded outside the Mac App Store (MAS) SHOULD be audited to ensure they maintain this security posture and do not request excessive exceptions.
+macOS supports two primary sandboxing mechanisms:
+
+- **App Sandbox (Static Entitlement):** Declared via the `com.apple.security.app-sandbox` entitlement at build time. This is mandatory for all Mac App Store (MAS) submissions and enforced by the system at launch. The application runs inside a container with only explicitly granted capabilities.
+- **Runtime Sandboxing (Dynamic/Hybrid):** Some applications, most notably Chromium-based browsers (Google Chrome, Microsoft Edge, Brave) and Firefox, implement their own sandbox architecture. These applications do *not* carry the static `com.apple.security.app-sandbox` entitlement. Instead, the main process runs unsandboxed to manage child process lifecycle, while each child process (Renderer, GPU, Utility) calls the macOS Seatbelt sandbox API (`sandbox_init`) at runtime with a tailored, restrictive profile. This is a deliberate architectural decision that provides per-process, role-specific sandboxing rather than a single blanket policy.
+
+All critical corporate applications MUST be sandboxed by one of the two mechanisms described above. Applications downloaded from outside the Mac App Store SHOULD be audited to ensure they maintain this security posture and do not request excessive exceptions.
+
+> **Note:** The absence of the static `com.apple.security.app-sandbox` entitlement does **not** necessarily mean an application is unsandboxed. Verify using the runtime checks described below before concluding an application is non-compliant.
 
 ###### Compliance Check
 
-The following command verifies the entitlements of a specified critical application. In this example, we verify *Google Chrome*. The output MUST contain the sandboxing key set to `true` and SHOULD contain as few additional exceptions as possible.
+**Method 1: Verify Static App Sandbox Entitlement**
 
-    > codesign --display --entitlements - /Applications/Google\ Chrome.app
+The following command verifies the entitlements of a specified application. In this example, we verify Microsoft Teams. The output format is an indentation-based dictionary, *not* XML.
+
+```
+> codesign --display --entitlements - /Applications/Microsoft\ Teams.app
+```
 
 The output MUST contain the sandboxing key:
 
-    ...
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    ...
+```
+    [Key] com.apple.security.app-sandbox
+    [Value]
+        [Bool] true
+```
 
-###### Audit of Sandbox Exceptions:
+Applications that carry this entitlement are statically sandboxed by the operating system.
 
-Merely having the Sandbox enabled is not sufficient if the application requests broad exceptions that punch holes in the container. The following example shows an analysis of Microsoft Teams, which acts as a negative example due to the extensive list of exceptions and entitlements required for its operation (e.g., `allow-unsigned-executable-memory` or direct access to specific sockets).
+**Method 2: Verify Runtime Sandboxing (for applications without the static entitlement)**
+
+Applications such as Google Chrome or Firefox use a hybrid sandbox design where the main (browser) process is *not* statically sandboxed, but all child processes are sandboxed at runtime. To verify this behavior:
+
+1. Launch the application (e.g., Google Chrome).
+2. Identify a child process (e.g., a Renderer or GPU helper) using Activity Monitor or `pgrep`:
+
+```
+> pgrep -fl "Google Chrome Helper"
+```
+
+3. Use `launchctl procinfo` on a child process PID to verify its sandbox state:
+
+```
+> launchctl procinfo <child-PID> | grep "sandboxed"
+sandboxed = probably
+```
+
+A value of `sandboxed = probably` on child processes confirms that runtime sandboxing is active. The parent browser process will show `sandboxed = no`, which is expected for this architecture.
+
+Alternatively, open **Activity Monitor**, enable the *Sandbox* column via *View → Columns*, and verify that child/helper processes of the application show as sandboxed.
+
+**Method 3: Verify Hardened Runtime**
+
+All notarized applications (required for distribution outside the MAS since macOS 10.15) MUST use the Hardened Runtime. This can be verified with:
+
+```
+> codesign --display --verbose /Applications/Google\ Chrome.app
+```
+
+The output MUST contain the `runtime` flag:
+
+```
+CodeDirectory v=20400 size=... flags=0x10000(runtime) ...
+```
+
+The `flags=0x...(runtime)` confirms that the Hardened Runtime is enabled.
+
+###### Audit of Sandbox Exceptions
+
+Merely having the App Sandbox enabled is not sufficient if the application requests broad exceptions that punch holes in the container. Applications with the static `com.apple.security.app-sandbox` entitlement SHOULD be audited for excessive exceptions.
 
 Run the check for the application in question:
 
-    > codesign --display --entitlements - /Applications/Microsoft\ Teams.app
+```
+> codesign --display --entitlements - /Applications/Microsoft\ Teams.app
+```
 
-The output reveals a “noisy” entitlement list. Note the specific exceptions that weaken the hardening status, such as allowed unsigned memory (often used for Electron apps) or specific file paths outside the container:
+The output reveals a "noisy" entitlement list. Note the specific exceptions that weaken the hardening status, such as allowed unsigned executable memory (often used for Electron apps) or specific file paths outside the container:
 
-    Executable=/Applications/Microsoft Teams.app/Contents/MacOS/MSTeams
-    [Dict]
-        [Key] com.apple.application-identifier
-        [Value]
-            [String] UBF8T346G9.com.microsoft.teams2
-        [Key] com.apple.developer.associated-domains
-        [Value]
-            [Array]
-                [String] webcredentials:login.microsoft.com
-                [String] webcredentials:login.microsoftonline.us
-                [String] webcredentials:login.partner.microsoftonline.cn
-        [Key] com.apple.developer.team-identifier
-        [Value]
-            [String] UBF8T346G9
-        [Key] com.apple.developer.usernotifications.communication
-        [Value]
-            [Bool] true
-        [Key] com.apple.security.app-sandbox
-        [Value]
-            [Bool] true
-        [Key] com.apple.security.application-groups
-        [Value]
-            [Array]
-                [String] UBF8T346G9.com.microsoft.teams
-                [String] UBF8T346G9.com.microsoft.oneauth
-        [Key] com.apple.security.cs.allow-unsigned-executable-memory
-        [Value]
-            [Bool] true
+```
+Executable=/Applications/Microsoft Teams.app/Contents/MacOS/MSTeams
+[Dict]
+    [Key] com.apple.application-identifier
+    [Value]
+        [String] UBF8T346G9.com.microsoft.teams2
+    [Key] com.apple.developer.associated-domains
+    [Value]
+        [Array]
+            [String] webcredentials:login.microsoft.com
+            [String] webcredentials:login.microsoftonline.us
+            [String] webcredentials:login.partner.microsoftonline.cn
+    [Key] com.apple.developer.team-identifier
+    [Value]
+        [String] UBF8T346G9
+    [Key] com.apple.developer.usernotifications.communication
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.app-sandbox
+    [Value]
+        [Bool] true
+    [Key] com.apple.security.application-groups
+    [Value]
+        [Array]
+            [String] UBF8T346G9.com.microsoft.teams
+            [String] UBF8T346G9.com.microsoft.oneauth
+    [Key] com.apple.security.cs.allow-unsigned-executable-memory
+    [Value]
+        [Bool] true
 
-        [...]
+    [...]
 
-        [Key] com.apple.security.personal-information.location
+    [Key] com.apple.security.personal-information.location
 
-        [...]
+    [...]
 
-                [String] (allow file-read* file-write* (subpath "/dev/fd"))
-                [String] (allow file-read* file-write* (subpath "/private/var/folders"))
-                [String] (allow file-read* file-write* (subpath "/usr/local/var/run/lldpd.socket"))
-                [String] (allow file-read* file-write* (literal "/private/var/run/com.microsoft.teams2.migrationtool.ctl"))
+            [String] (allow file-read* file-write* (subpath "/dev/fd"))
+            [String] (allow file-read* file-write* (subpath "/private/var/folders"))
+            [String] (allow file-read* file-write* (subpath "/usr/local/var/run/lldpd.socket"))
+            [String] (allow file-read* file-write* (literal "/private/var/run/com.microsoft.teams2.migrationtool.ctl"))
 
-                [...]
+            [...]
+```
 
 ###### Implementation
 
-If an application is found to be running without the necessary sandboxing entitlements or with excessive, unjustified exceptions:
+If an application is found to be running without any form of sandboxing (neither the static entitlement nor runtime sandbox enforcement) or with excessive, unjustified exceptions:
 
-- *Identify:* Run the `codesign` check on critical third-party software.
-- *Replace:* Prefer downloading the application from the Mac App Store (MAS), as Apple mandates stricter sandboxing for all MAS submissions.
-- *Mitigate:* If a business-critical application requires these exceptions (like Teams), ensure it is kept strictly up-to-date to minimize the risk of the weakened sandbox being exploited.
+1. **Identify:** Run the `codesign` entitlement check and, if the static entitlement is absent, verify runtime sandboxing via `launchctl procinfo` or Activity Monitor.
+2. **Replace:** Prefer downloading the application from the Mac App Store (MAS), as Apple mandates stricter sandboxing for all MAS submissions.
+3. **Mitigate:** If a business-critical application requires broad exceptions (like Teams) or uses runtime sandboxing without the static entitlement (like Chrome), ensure it is kept strictly up-to-date to minimize the risk of the weakened or non-standard sandbox being exploited.
+4. **Verify Hardened Runtime:** As a baseline, all applications MUST at minimum have the Hardened Runtime enabled (`flags=0x...(runtime)`), regardless of their sandboxing approach.
 
 # Additional Security Hardening
 
