@@ -665,17 +665,12 @@ Administrators MUST periodically audit third-party services. All persistent soft
 
 System services are defined in Property List (`.plist`) files. For a security audit, it is crucial to distinguish between the location of the file and the resulting privileges.
 
-<div class="longtable*">
-
-L2.93cmL2.93cmL2.93cmL5.12cm
-
-**Directory** & **Scope** & **Privilege Level** & **Risk Context**\
-`/System/Library/LaunchDaemons` & macOS Core & Root & Protected by SIP (Read-Only).\
-`/Library/LaunchDaemons` & Third-Party & Root & Highest risk. Binaries executed here have full system control.\
-`\~/Library/LaunchAgents` & User-Specific & User & Persistence level. Malware here affects the specific user only.\
-`/Library/LaunchAgents` & Global Users & User & Runs as the specific user logging in, but applies to all users.\
-
-</div>
+| Directory | Scope | Privilege Level | Risk Context |
+|---|---|---|---|
+| `/System/Library/LaunchDaemons` | macOS Core | Root | Protected by SIP (Read-Only). |
+| `/Library/LaunchDaemons` | Third-Party | Root | Highest risk. Binaries executed here have full system control. |
+| `~/Library/LaunchAgents` | User-Specific | User | Persistence level. Malware here affects the specific user only. |
+| `/Library/LaunchAgents` | Global Users | User | Runs as the specific user logging in, but applies to all users. |
 
 #### Auditing Active Services
 
@@ -1933,18 +1928,13 @@ To minimize the attack surface, services that are not required for standard clie
 
 The following services MUST be disabled:
 
-<div class="longtable*">
-
-L3.36cmL3.36cmL7.57cm
-
-**Service** & **Identifier** & **Description**\
-TFTP & `com.apple.tftpd` & Trivial File Transfer Protocol (insecure, no auth)\
-NFS & `com.apple.nfsd` & Network File System server\
-HTTPD & `org.apache.httpd` & Built-in Apache Web Server\
-UUCP & `com.apple.uucp` & Unix-to-Unix Copy Protocol (Legacy)\
-SSH & `com.openssh.sshd` & Secure Shell / Remote Login\
-
-</div>
+| Service | Identifier | Description |
+|---|---|---|
+| TFTP | `com.apple.tftpd` | Trivial File Transfer Protocol (insecure, no auth) |
+| NFS | `com.apple.nfsd` | Network File System server |
+| HTTPD | `org.apache.httpd` | Built-in Apache Web Server |
+| UUCP | `com.apple.uucp` | Unix-to-Unix Copy Protocol (Legacy) |
+| SSH | `com.openssh.sshd` | Secure Shell / Remote Login |
 
 > **Note:** While SSH is a secure protocol, the *SSH Server* (allowing others to connect to *this* Mac) should remain disabled unless the device is a designated server or requires remote administration. This corresponds to the Remote Login setting in *System Settings* → *General* → *Sharing*.
 
@@ -1995,25 +1985,20 @@ This section details the hardening of macOS applications by disabling their iClo
 
 To enforce this, the `ERNW_icloud_services.mobileconfig` policy (or equivalent MDM payload) MUST be installed on the macOS system. The following table lists the relevant keys for the `com.apple.applicationaccess` payload that control iCloud services. All keys belong to the `com.apple.applicationaccess` domain and MUST be set to `false` (boolean) to disable the respective service.
 
-<div class="longtable*">
-
-L7.35cmL7.35cm
-
-**Functionality** & **Configuration Key**\
-Disable iCloud Document Sync (iCloud Drive) & `allowCloudDocumentSync`\
-Disable iCloud Desktop and Document Folder Sync & `allowCloudDesktopAndDocuments`\
-Disable iCloud Address Book & `allowCloudAddressBook`\
-Disable iCloud Calendar Services & `allowCloudCalendar`\
-Disable iCloud Reminders & `allowCloudReminders`\
-Disable iCloud Notes & `allowCloudNotes`\
-Disable iCloud Mail & `allowCloudMail`\
-Disable iCloud Photo Library & `allowCloudPhotoLibrary`\
-Disable iCloud Safari Bookmark Sync & `allowCloudBookmarks`\
-Disable iCloud Freeform (macOS 13+) & `allowCloudFreeform`\
-Disable iCloud Keychain Sync & `allowCloudKeychainSync`\
-Disable iCloud Private Relay & `allowCloudPrivateRelay`\
-
-</div>
+| Functionality | Configuration Key |
+|---|---|
+| Disable iCloud Document Sync (iCloud Drive) | `allowCloudDocumentSync` |
+| Disable iCloud Desktop and Document Folder Sync | `allowCloudDesktopAndDocuments` |
+| Disable iCloud Address Book | `allowCloudAddressBook` |
+| Disable iCloud Calendar Services | `allowCloudCalendar` |
+| Disable iCloud Reminders | `allowCloudReminders` |
+| Disable iCloud Notes | `allowCloudNotes` |
+| Disable iCloud Mail | `allowCloudMail` |
+| Disable iCloud Photo Library | `allowCloudPhotoLibrary` |
+| Disable iCloud Safari Bookmark Sync | `allowCloudBookmarks` |
+| Disable iCloud Freeform (macOS 13+) | `allowCloudFreeform` |
+| Disable iCloud Keychain Sync | `allowCloudKeychainSync` |
+| Disable iCloud Private Relay | `allowCloudPrivateRelay` |
 
 ###### Implementation
 
@@ -2089,17 +2074,12 @@ macOS and iOS devices include functionality to request and provide passwords to 
 
 To do so, install the provided `ERNW_password_sharing.mobileconfig` policy on the macOS system.
 
-<div class="longtable*">
-
-L7.92cmL6.78cm
-
-**Functionality** & **Configuration Key**\
-Allow Password Sharing & `allowPasswordSharing`\
-Allow Password Proximity Requests & `allowPasswordProximityRequests`\
-Disable Auto Unlock (Apple Watch) & `allowAutoUnlock`\
-Disable Handoff and Continuity & `allowActivityContinuation`\
-
-</div>
+| Functionality | Configuration Key |
+|---|---|
+| Allow Password Sharing | `allowPasswordSharing` |
+| Allow Password Proximity Requests | `allowPasswordProximityRequests` |
+| Disable Auto Unlock (Apple Watch) | `allowAutoUnlock` |
+| Disable Handoff and Continuity | `allowActivityContinuation` |
 
 All keys are in the `com.apple.applicationaccess` domain and can be disabled by setting their value to `false`.
 
@@ -2231,19 +2211,14 @@ The *Privacy & Security* pane lists various hardware and data categories (e.g., 
 
 Users MUST manually review the following categories. If any application is listed that is not regularly required for business purposes, its access MUST be revoked.
 
-<div class="longtable*">
-
-L7.35cmL7.35cm
-
-**Category** & **Recommended State**\
-Camera / Microphone & Restricted\
-Screen Recording & Highly Restricted\
-Files and Folders & Restricted\
-Motion & Fitness & No applications\
-HomeKit & No applications\
-Bluetooth & Restricted\
-
-</div>
+| Category | Recommended State |
+|---|---|
+| Camera / Microphone | Restricted |
+| Screen Recording | Highly Restricted |
+| Files and Folders | Restricted |
+| Motion & Fitness | No applications |
+| HomeKit | No applications |
+| Bluetooth | Restricted |
 
 ###### Location Services Configuration
 
