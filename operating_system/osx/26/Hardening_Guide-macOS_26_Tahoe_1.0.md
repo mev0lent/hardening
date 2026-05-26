@@ -212,7 +212,7 @@ The current local policies settings can be reviewed using a tool named `bputil`.
     Kernel CTRR Status:          Enabled    (sip2): absent
     Boot Args Filtering Status:  Enabled    (sip3): absent
 
-When MUST be a line saying `Security Mode:               Full       (smb0): absent`.
+The output MUST contain a line reading `Security Mode:       Full       (smb0): absent`.
 
 ## Ensure System Integrity Protection Is Enabled
 
