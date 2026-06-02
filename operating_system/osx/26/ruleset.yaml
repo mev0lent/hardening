@@ -348,9 +348,12 @@ arch:
 - amd64
 checksuites:
 - id: usb-restricted-mode-enabled
-  description: Verifies that the USB Restricted Mode policy is active, requiring user approval for accessory connections,
-    especially when the Mac is locked.
-  command: defaults read /Library/Preferences/com.apple.accessd USBAccessories | grep -c 'Ask'
+  description: 'Verifies that USB Accessory Security (Restricted Mode) is active, requiring user approval before accessories
+    can communicate when the Mac is locked. NOTE: This feature only exists on Apple Silicon laptops (MacBook Air/Pro). It
+    is not available on desktop Macs (Mac mini, iMac, Mac Pro, Mac Studio) — on those systems this check passes as not
+    applicable.'
+  command: if [ -f /Library/Preferences/com.apple.accessd.plist ]; then defaults read /Library/Preferences/com.apple.accessd
+    USBAccessories 2>/dev/null | grep -c 'Ask'; else echo 1; fi
   expected: 1
   sudo: true
   fix: |
@@ -360,8 +363,9 @@ checksuites:
   post_action: None. Policy is enforced via CLI.
   security_level: baseline
   risk_level: low
-  risk_desc: This setting may mildly inconvenience the user by requiring approval for new accessories, but it drastically
-    reduces the risk of malicious physical access or DMA attacks.
+  risk_desc: 'Feature is laptop-only (Apple Silicon MacBook). On desktop Macs, com.apple.accessd does not exist and this
+    check is not applicable. On laptops: requires user approval for accessories on a locked Mac, reducing physical attack
+    surface.'
 
 ---
 
