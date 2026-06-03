@@ -399,7 +399,8 @@ checksuites:
   expected: 0
   sudo: false
   fix: 'Manual action required: Remove insecure protocol packages (e.g., on Debian/Ubuntu: sudo apt-get purge -y rsh-client
-    telnetd vsftpd tftpd)'
+    telnetd vsftpd tftpd | on RHEL/Fedora: sudo dnf remove rsh telnet vsftpd tftp-server | on Arch: sudo pacman -Rns inetutils
+    vsftpd)'
   fix_sudo: false
   affected_file: N/A
   post_action: None
@@ -506,7 +507,9 @@ checksuites:
   command: command -v sshd >/dev/null 2>&1 && echo 1 || echo 0
   expected: 0
   sudo: false
-  fix: 'Manual action required: Remove the SSH server package (e.g., on Debian/Ubuntu: sudo apt-get purge -y openssh-server)'
+  fix: 'Manual action required: Remove the SSH server package (e.g., on Debian/Ubuntu: sudo apt-get purge -y openssh-server
+    | on RHEL/Fedora: sudo dnf remove openssh-server | on Arch: sudo pacman -Rns openssh | on OpenSUSE: sudo zypper remove
+    openssh)'
   fix_sudo: false
   affected_file: N/A
   post_action: None
@@ -518,7 +521,9 @@ checksuites:
   command: command -v ssh >/dev/null 2>&1 && echo 1 || echo 0
   expected: 1
   sudo: false
-  fix: 'Manual action required: Install the SSH client package (e.g., on Debian/Ubuntu: sudo apt-get install -y openssh-client)'
+  fix: 'Manual action required: Install the SSH client package (e.g., on Debian/Ubuntu: sudo apt-get install -y openssh-client
+    | on RHEL/Fedora: sudo dnf install openssh-clients | on Arch: sudo pacman -S openssh | on OpenSUSE: sudo zypper install
+    openssh)'
   fix_sudo: false
   affected_file: N/A
   post_action: None
@@ -895,7 +900,9 @@ checksuites:
   expected: 1
   sudo: false
   fix: 'Manual action required: Install and enable a time synchronization service (e.g., on Debian/Ubuntu: sudo apt install
-    chrony && sudo systemctl enable --now chronyd)'
+    chrony && sudo systemctl enable --now chronyd | on RHEL/Fedora: sudo dnf install chrony && sudo systemctl enable --now
+    chronyd | on Arch: sudo pacman -S chrony && sudo systemctl enable --now chronyd | on OpenSUSE: sudo zypper install chrony
+    && sudo systemctl enable --now chronyd)'
   fix_sudo: false
   affected_file: System service configuration
   post_action: None
@@ -1333,7 +1340,8 @@ checksuites:
   command: command -v aide >/dev/null 2>&1 && echo 1 || echo 0
   expected: 1
   sudo: false
-  fix: 'Manual action required: Install AIDE (e.g., on Debian/Ubuntu: sudo apt install aide aide-common)'
+  fix: 'Manual action required: Install AIDE (e.g., on Debian/Ubuntu: sudo apt install aide aide-common | on RHEL/Fedora: sudo
+    dnf install aide | on Arch: sudo pacman -S aide | on OpenSUSE: sudo zypper install aide)'
   fix_sudo: false
   affected_file: N/A
   post_action: Run 'sudo aideinit' to initialize the baseline database.
@@ -1437,10 +1445,11 @@ arch:
 checksuites:
 - id: auditd-package-installed
   description: Verify that the auditd package, which provides the Linux Auditing Framework daemon, is installed on the system.
-  command: dpkg -l auditd 2>/dev/null | grep -c '^ii'
+  command: command -v auditd >/dev/null 2>&1 && echo 1 || echo 0
   expected: 1
   sudo: false
-  fix: sudo apt install auditd
+  fix: 'Manual action required: Install auditd (e.g., on Debian/Ubuntu: sudo apt install auditd | on RHEL/Fedora: sudo dnf
+    install audit | on Arch: sudo pacman -S audit | on OpenSUSE: sudo zypper install audit)'
   fix_sudo: true
   affected_file: System package list
   post_action: None
