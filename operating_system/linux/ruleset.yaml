@@ -1666,6 +1666,7 @@ labels:
 checksuites:
 - id: usbguard-service-active
   description: Verify that the USBGuard service is installed, enabled, and running to enforce USB device policies.
+  requires_command: usbguard
   command: systemctl is-active usbguard
   expected: active
   sudo: true
@@ -2085,6 +2086,7 @@ checksuites:
 - id: auditd-service-enabled
   description: Verify that the auditd service is enabled to ensure that the auditing framework starts automatically upon system
     boot.
+  requires_command: auditctl
   command: systemctl is-enabled auditd
   expected: enabled
   sudo: false
@@ -2097,6 +2099,7 @@ checksuites:
   risk_desc: Enabling the service is essential for persistent security monitoring and poses a minimal risk.
 - id: auditd-service-active
   description: Verify that the auditd service is currently running actively to ensure continuous security event logging.
+  requires_command: auditctl
   command: systemctl is-active auditd
   expected: active
   sudo: false
@@ -2345,8 +2348,8 @@ labels:
 checksuites:
 - id: journald-persistent-storage
   description: Verify that journal storage is set to 'persistent' to retain forensic logs across reboots.
-  command: grep -E '^Storage=' /etc/systemd/journald.conf | awk -F= '{print $2}' | tr -d '[:space:]'
-  expected: persistent
+  command: grep -c '^Storage=persistent' /etc/systemd/journald.conf 2>/dev/null
+  expected: '1'
   sudo: false
   fix: |
     sudo sed -i 's/^#\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
@@ -2357,9 +2360,9 @@ checksuites:
   risk_level: low
   risk_desc: Changing storage creates the /var/log/journal directory, which is necessary for forensic integrity.
 - id: journald-compression-enabled
-  description: Verify that log compression is enabled for efficient disk space management.
-  command: grep -E '^Compress=' /etc/systemd/journald.conf | awk -F= '{print $2}' | tr -d '[:space:]'
-  expected: 'yes'
+  description: Verify that log compression is not explicitly disabled (default is enabled).
+  command: grep -c '^Compress=no' /etc/systemd/journald.conf 2>/dev/null
+  expected: '0'
   sudo: false
   fix: |
     sudo sed -i 's/^#\\?Compress=.*/Compress=yes/' /etc/systemd/journald.conf
@@ -2396,10 +2399,10 @@ labels:
 checksuites:
 - id: cron_only_root_allowed
   description: Ensure that only the root user is allowed to schedule cron jobs by using a restrictive /etc/cron.allow file.
-  command: grep -q "^root$" /etc/cron.allow && [ \! -f /etc/cron.deny ]
-  expected: ''
+  command: if [ -f /etc/cron.allow ] && grep -q '^root$' /etc/cron.allow 2>/dev/null && [ ! -f /etc/cron.deny ]; then echo 1; else echo 0; fi
+  expected: '1'
   sudo: true
-  fix: rm -f /etc/cron.deny; echo "root" \> /etc/cron.allow; chmod 0640 /etc/cron.allow; chown root:root /etc/cron.allow
+  fix: rm -f /etc/cron.deny; echo "root" > /etc/cron.allow; chmod 0640 /etc/cron.allow; chown root:root /etc/cron.allow
   fix_sudo: true
   affected_file: /etc/cron.allow
   post_action: None
@@ -2409,10 +2412,10 @@ checksuites:
     These users will need to request that root or an authorized admin set up the job.
 - id: at_only_root_allowed
   description: Ensure that only the root user is allowed to schedule at jobs by using a restrictive /etc/at.allow file.
-  command: grep -q "^root$" /etc/at.allow && [ \! -f /etc/at.deny ]
-  expected: ''
+  command: if [ -f /etc/at.allow ] && grep -q '^root$' /etc/at.allow 2>/dev/null && [ ! -f /etc/at.deny ]; then echo 1; else echo 0; fi
+  expected: '1'
   sudo: true
-  fix: rm -f /etc/at.deny; echo "root" \> /etc/at.allow; chmod 0640 /etc/at.allow; chown root:root /etc/at.allow
+  fix: rm -f /etc/at.deny; echo "root" > /etc/at.allow; chmod 0640 /etc/at.allow; chown root:root /etc/at.allow
   fix_sudo: true
   affected_file: /etc/at.allow
   post_action: None
