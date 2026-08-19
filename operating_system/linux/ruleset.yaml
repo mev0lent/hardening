@@ -7,10 +7,6 @@ preconditions:
 
 ---
 
-# =========================================================================
-# Phase 1 - Firmware, Disk Layout and Boot Chain
-# =========================================================================
-
 title: Secure BIOS/UEFI Settings
 os: linux
 arch:
@@ -22,11 +18,6 @@ checksuites:
 - id: bios-password-set
   description: Verify that a BIOS/UEFI administrator password is set to prevent unauthorized firmware changes.
   command: |
-    # This control lives in firmware and cannot be read from the running OS.
-    # The field previously contained the prose "Manual verification required.",
-    # which the shell tried to execute, giving "Manual: not found" (exit 127).
-    # It now reports a stable sentinel so the runner shows it as an outstanding
-    # manual control instead of a broken check.
     echo 'MANUAL-VERIFICATION-REQUIRED'
   expected: 'Verified in firmware setup'
   sudo: false
@@ -40,10 +31,6 @@ checksuites:
 - id: secure-boot-enabled
   description: Ensure Secure Boot is enabled to maintain the cryptographic chain of trust.
   command: |
-    # `sudo dmesg | grep -i 'secure boot'` was unreliable twice over: dmesg is
-    # unreadable once kernel.dmesg_restrict=1 (which this very ruleset mandates),
-    # and the trailing grep exited 1 whenever nothing matched. The EFI variable is
-    # the authoritative source; mokutil is used when available.
     if command -v mokutil >/dev/null 2>&1; then
       mokutil --sb-state 2>/dev/null | grep -qiE 'SecureBoot[[:space:]]+(is[[:space:]]+)?enabled' \
         && { echo 1; exit 0; }
@@ -66,11 +53,6 @@ checksuites:
 - id: boot-order-restricted
   description: Verify the boot order is restricted to the local disk to prevent external media booting.
   command: |
-    # This control lives in firmware and cannot be read from the running OS.
-    # The field previously contained the prose "Manual verification required.",
-    # which the shell tried to execute, giving "Manual: not found" (exit 127).
-    # It now reports a stable sentinel so the runner shows it as an outstanding
-    # manual control instead of a broken check.
     echo 'MANUAL-VERIFICATION-REQUIRED'
   expected: 'Verified in firmware setup'
   sudo: false
@@ -90,22 +72,10 @@ arch:
 - arm64
 labels:
 - filesystem
-# NOTE: the former separate suite "Enforcing Restrictive Mount Options" has been
-# merged into this one. It duplicated mount-options-tmp / mount-options-home
-# under different ids, and its commands matched the fstab option ORDER
-# ('nodev.*nosuid.*noexec') even though the kernel reports them as
-# 'rw,nosuid,nodev,noexec' — so those checks failed on correctly hardened
-# systems. All option matching below is order-independent and uses the kernel
-# view (findmnt -k) rather than the contents of /etc/fstab, because a correct
-# fstab entry that has not been applied is not a hardened system.
 checksuites:
-# --- Mandatory: world-writable filesystems that must always be separate ---
 - id: separate-partition-tmp
   description: Ensure /tmp is a separate filesystem (tmpfs or a dedicated volume) rather than part of the root filesystem.
   command: |
-    # findmnt exits 1 when the path is not a separate mount point. Piping
-    # through head makes the pipeline exit 0 and yield empty output, which
-    # fails the '.+' match cleanly instead of erroring.
     findmnt -n -k -o TARGET /tmp 2>/dev/null | head -n1
   expected: .+
   sudo: false
@@ -121,7 +91,6 @@ checksuites:
     carries a high risk of data loss if performed incorrectly.
 - id: mount-options-tmp
   description: 'Ensure /tmp is mounted with all three restrictive options: nodev, nosuid and noexec.'
-  # Order-independent: the kernel reports 'rw,nosuid,nodev,noexec,...'.
   command: |
     opts=$(findmnt -n -k -o OPTIONS /tmp 2>/dev/null)
     [ -n "$opts" ] || { echo 0; exit 0; }
@@ -144,9 +113,6 @@ checksuites:
     native libraries. The correct remedy is to point those processes at a private TMPDIR, not to remove noexec.
 - id: mount-options-dev-shm
   description: 'Ensure /dev/shm is mounted with all three restrictive options: nodev, nosuid and noexec.'
-  # /dev/shm is mounted by systemd before /etc/fstab is processed and is
-  # therefore always present, but is NOT hardened by default on most distros.
-  # An explicit fstab entry causes it to be remounted correctly during boot.
   command: |
     opts=$(findmnt -n -k -o OPTIONS /dev/shm 2>/dev/null)
     [ -n "$opts" ] || { echo 0; exit 0; }
@@ -165,17 +131,10 @@ checksuites:
   security_level: baseline
   risk_level: low
   risk_desc: Minimal impact; shared memory rarely requires binary execution.
-# --- Recommended: separate filesystems for growth and containment ---
-# These are SHOULD-level in the guide. The mount-option checks below pass when
-# the directory is not a separate filesystem, so that a missing partition is
-# reported once (by the separate-partition check) rather than twice.
 - id: separate-partition-home
   description: OPTIONAL on single-user clients. Ensure /home is a separate filesystem so that user data cannot exhaust the
     root filesystem and so that nodev/nosuid can be applied to user-writable space.
   command: |
-    # findmnt exits 1 when the path is not a separate mount point. Piping
-    # through head makes the pipeline exit 0 and yield empty output, which
-    # fails the '.+' match cleanly instead of erroring.
     findmnt -n -k -o TARGET /home 2>/dev/null | head -n1
   expected: .+
   sudo: false
@@ -187,16 +146,12 @@ checksuites:
   security_level: high
   risk_level: high
   risk_desc: 'Retrofitting this is repartitioning: it cannot be automated, cannot be rolled back by the tool, and carries
-    a high risk of data loss. The security benefit on a single-user client is small — nodev and nosuid only block device
+    a high risk of data loss. The security benefit on a single-user client is small, because nodev and nosuid only block device
     nodes and SUID binaries, and creating either already requires root. Set at security_level high so that a baseline run
     skips it; it is worth enforcing on multi-user and server systems, and worth choosing at install time everywhere, but
     it is not worth repartitioning a working client for.'
 - id: mount-options-home
   description: Ensure /home is mounted with nodev and nosuid when it is a separate filesystem.
-  # noexec is deliberately NOT required on /home: ~/.local/bin, pip/npm/cargo
-  # user installs, Flatpak, AppImage and browser components all execute from the
-  # home directory, and an attacker can bypass noexec by invoking an interpreter
-  # directly. See "Functional Exceptions" in the guide.
   command: |
     opts=$(findmnt -n -k -o OPTIONS /home 2>/dev/null)
     [ -n "$opts" ] || { echo 1; exit 0; }
@@ -222,9 +177,6 @@ checksuites:
   description: OPTIONAL on single-user clients. Ensure /var is a separate filesystem so that application, container and spool
     data cannot exhaust the root filesystem.
   command: |
-    # findmnt exits 1 when the path is not a separate mount point. Piping
-    # through head makes the pipeline exit 0 and yield empty output, which
-    # fails the '.+' match cleanly instead of erroring.
     findmnt -n -k -o TARGET /var 2>/dev/null | head -n1
   expected: .+
   sudo: false
@@ -240,9 +192,6 @@ checksuites:
     baseline run skips it.
 - id: mount-options-var
   description: Ensure /var is mounted with nodev and nosuid when it is a separate filesystem.
-  # noexec MUST NOT be set on /var: dpkg/rpm maintainer scripts, snapd
-  # (/var/lib/snapd/snap) and container runtimes all execute from /var.
-  # noexec belongs on the /var/log, /var/log/audit and /var/tmp subtrees only.
   command: |
     opts=$(findmnt -n -k -o OPTIONS /var 2>/dev/null)
     [ -n "$opts" ] || { echo 1; exit 0; }
@@ -254,7 +203,7 @@ checksuites:
   expected: 1
   sudo: false
   fix: 'Manual action required: Add ''nodev,nosuid'' to the /var entry in /etc/fstab, then run ''sudo mount -o remount /var''.
-    Do NOT add noexec — it breaks package manager maintainer scripts, snapd and container runtimes.'
+    Do NOT add noexec. It breaks package manager maintainer scripts, snapd and container runtimes.'
   fix_sudo: true
   affected_file: /etc/fstab
   post_action: sudo mount -o remount /var
@@ -284,9 +233,6 @@ checksuites:
 - id: separate-partition-var-log-audit
   description: Ensure /var/log/audit is a separate filesystem, so that a full audit log cannot halt or suspend the whole system.
   command: |
-    # findmnt exits 1 when the path is not a separate mount point. Piping
-    # through head makes the pipeline exit 0 and yield empty output, which
-    # fails the '.+' match cleanly instead of erroring.
     findmnt -n -k -o TARGET /var/log/audit 2>/dev/null | head -n1
   expected: .+
   sudo: false
@@ -320,9 +266,6 @@ checksuites:
   risk_desc: /var/tmp is world-writable and persists across reboots; noexec here is safe.
 - id: mount-options-boot
   description: Ensure /boot is mounted with nodev, nosuid and noexec when it is a separate filesystem.
-  # Safe: the bootloader and firmware read /boot and the ESP before the kernel
-  # enforces mount flags. Passes when /boot is not a separate filesystem
-  # (e.g. Btrfs subvolume layouts on openSUSE/Fedora).
   command: |
     opts=$(findmnt -n -k -o OPTIONS /boot 2>/dev/null)
     [ -n "$opts" ] || { echo 1; exit 0; }
@@ -343,8 +286,6 @@ checksuites:
   risk_desc: The bootloader reads this partition before mount flags are enforced, so these options do not affect booting.
 - id: mount-options-boot-efi
   description: Ensure the EFI System Partition (/boot/efi) is mounted with nodev, nosuid, noexec and umask=0077 on UEFI systems.
-  # vfat carries no UNIX permissions, so umask= is the only way to restrict
-  # access. Passes on BIOS/legacy systems, where /boot/efi does not exist.
   command: |
     opts=$(findmnt -n -k -o OPTIONS /boot/efi 2>/dev/null)
     [ -n "$opts" ] || { echo 1; exit 0; }
@@ -352,8 +293,6 @@ checksuites:
     for o in nodev nosuid noexec; do
       printf '%s' "$opts" | tr ',' '\n' | grep -qx "$o" || ok=0
     done
-    # The kernel normalises 'umask=0077' on vfat into 'fmask=0077,dmask=0077',
-    # so both representations are accepted.
     printf '%s' "$opts" | tr ',' '\n' | grep -qxE '(umask|fmask)=0*77' || ok=0
     printf '%s' "$opts" | tr ',' '\n' | grep -qxE '(umask|dmask)=0*77' || ok=0
     echo "$ok"
@@ -368,13 +307,9 @@ checksuites:
   risk_level: low
   risk_desc: Firmware reads the ESP directly and is unaffected by kernel mount flags. Writes by grub-install and fwupd continue
     to work.
-# --- fstab consistency ---
 - id: fstab-verify
   description: Verify that /etc/fstab is syntactically valid and that every referenced device and mount point resolves, so
     that the next boot does not drop into the emergency shell.
-  # Uses the exit status rather than parsing output text: findmnt prints
-  # "Success, no errors or warnings detected" when clean and a
-  # "N parse errors, N errors, N warnings" summary otherwise.
   command: |
     findmnt --verify >/dev/null 2>&1 && echo 1 || echo 0
   expected: 1
@@ -388,7 +323,6 @@ checksuites:
   risk_level: low
   risk_desc: Read-only validation. Warnings are common on systems using systemd mount units and should be reviewed rather than
     assumed to be failures.
-# --- Permission hardening on world-writable directories ---
 - id: 38-fs-05-sticky-bit
   description: Ensure the Sticky Bit is set on all world-writable directories.
   command: find / -xdev -type d \( -perm -0002 -a ! -perm -1000 \) | wc -l
@@ -416,14 +350,7 @@ checksuites:
     booting via systemd-boot or rEFInd (common on Arch, and increasingly offered as an option elsewhere), which have no
     grub.cfg and use a different (currently unaudited) mechanism for boot entry protection.
   requires_file: /boot/grub/grub.cfg
-  # Upstream issue #3: the runner merges stderr into stdout and compares the
-  # combined buffer against `expected`, so a "No such file or directory" or
-  # "Permission denied" line silently corrupts the compared value. stderr is
-  # discarded here so the result depends only on the system state.
   command: |
-    # GRUB config lives at /boot/grub/grub.cfg on Debian/Ubuntu/Arch and at
-    # /boot/grub2/grub.cfg on the RHEL family and openSUSE; UEFI installs may use
-    # /boot/efi/EFI/<distro>/grub.cfg. All are checked.
     grep -rhi '^[[:space:]]*password_pbkdf2' \
       /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/grub/user.cfg /boot/grub2/user.cfg \
       /etc/grub.d/ 2>/dev/null | wc -l
@@ -455,8 +382,6 @@ checksuites:
   requires_command: mokutil
   requires_file: /sys/firmware/efi
   command: |
-    # mokutil is not installed by default on several distributions; the command
-    # then exited 127 and the runner reported an error rather than a finding.
     command -v mokutil >/dev/null 2>&1 || { echo 0; exit 0; }
     mokutil --sb-state 2>/dev/null | grep -ciE 'SecureBoot[[:space:]]+(is[[:space:]]+)?enabled' || true
   expected: 1
@@ -478,13 +403,9 @@ checksuites:
   description: Verify that the system is operating in User Mode (not Setup Mode) to ensure that the cryptographic keys are
     installed and enforcing the signing policy. Only meaningful on UEFI systems; BIOS/legacy-boot VMs are skipped
     cleanly rather than reported as failures.
-  # /sys/firmware/efi only exists when booted in UEFI mode. bootctl is available
-  # everywhere systemd is installed but has nothing to report on BIOS.
   requires_command: bootctl
   requires_file: /sys/firmware/efi
   command: |
-    # bootctl is absent on non-systemd-boot and BIOS systems, where the command
-    # exited non-zero and was reported as an error.
     command -v bootctl >/dev/null 2>&1 || { echo 0; exit 0; }
     bootctl status 2>/dev/null | grep -cF 'Setup Mode: no' || true
   expected: 1
@@ -504,9 +425,6 @@ checksuites:
 - id: kernel-sig-enforce
   description: Verify that the kernel is enforcing module signature checks at runtime, which is required when Secure Boot
     is active.
-  # The knob is absent unless the relevant support is compiled in/installed,
-  # in which case `cat` exited 1 and the runner reported an error. Absence is
-  # semantically "not enabled", so 0 is reported instead.
   command: |
     cat /proc/sys/kernel/module_sig_enforce 2>/dev/null || echo 0
   expected: 1
@@ -521,10 +439,6 @@ checksuites:
   risk_desc: This check does not alter the system; it only verifies the security state.
 
 ---
-
-# =========================================================================
-# Phase 2 - Base System Integrity
-# =========================================================================
 
 title: Verify Package Integrity
 os: linux
@@ -578,8 +492,6 @@ checksuites:
   description: Verify that a non-zero microcode revision (indicating a successful update over the default BIOS version) is
     loaded in the running CPU.
   command: |
-    # /proc/cpuinfo has no 'microcode' field on aarch64, where the pipeline
-    # produced an empty result and grep -c exited 1.
     grep -m1 -i 'microcode' /proc/cpuinfo 2>/dev/null | awk '{print $NF}' \
       | grep -cE '^0x0*[1-9a-fA-F][0-9a-fA-F]*$' || true
   expected: 1
@@ -596,9 +508,6 @@ checksuites:
   description: Verify that the system is reporting successful mitigation for critical hardware vulnerabilities, such as Spectre
     V2, which requires microcode patches.
   command: |
-    # 'Not affected' is as compliant as 'Mitigation:' and is what aarch64 and
-    # newer CPUs report; previously only 'Mitigation:' counted and the zero
-    # count made grep -c exit 1.
     cat /sys/devices/system/cpu/vulnerabilities/spectre_v2 2>/dev/null \
       | grep -cE 'Mitigation:|Not affected' || true
   expected: 1
@@ -708,8 +617,6 @@ labels:
 checksuites:
 - id: ctrl-alt-del-masked
   description: Verify that the Ctrl-Alt-Del reboot sequence is disabled by masking the systemd target.
-  # `systemctl is-enabled` exits 1 for a masked unit even though masked is the
-  # desired state, and the following `grep -c` exited 1 again on a zero count.
   command: |
     out=$(systemctl is-enabled ctrl-alt-del.target 2>/dev/null)
     printf '%s\n' "$out" | grep -cx masked || true
@@ -724,10 +631,6 @@ checksuites:
   risk_desc: Prevents accidental or unauthorized reboots from the physical keyboard.
 
 ---
-
-# =========================================================================
-# Phase 3 - Establish Administrative Access
-# =========================================================================
 
 title: Harden Administrative Accounts
 os: linux
@@ -857,10 +760,6 @@ checksuites:
 
 ---
 
-# =========================================================================
-# Phase 4 - Authentication and Password Policy
-# =========================================================================
-
 title: Use Strong Hashing Algorithm
 os: linux
 arch:
@@ -893,12 +792,6 @@ labels:
 checksuites:
 - id: pam-stack-integration
   description: Verify that the pam_pwquality module is actually active in the PAM stack.
-  # Detect the correct PAM file(s) at runtime — /etc/pam.d/system-auth and
-  # /etc/pam.d/password-auth on RHEL/Rocky/Fedora (Arch has system-auth only),
-  # /etc/pam.d/common-password on Debian/Ubuntu/openSUSE. Every password stack
-  # present on the system must carry the module, otherwise remote logins can
-  # bypass the policy enforced for local ones.
-  # Accepts 'requisite' (Debian/Ubuntu, RHEL) and 'required' (Arch).
   command: |
     files=""
     for f in /etc/pam.d/system-auth /etc/pam.d/password-auth /etc/pam.d/common-password; do
@@ -914,7 +807,7 @@ checksuites:
   sudo: false
   fix: 'Manual action required: Ensure ''password requisite pam_pwquality.so'' is present in the password PAM stack. On
     Debian/Ubuntu/OpenSUSE/SUSE: edit /etc/pam.d/common-password. On RHEL/Rocky/AlmaLinux/Fedora: use ''authselect'' to
-    manage PAM (do not edit /etc/pam.d/system-auth directly — it is managed by authselect). On Arch/Manjaro: edit
+    manage PAM (do not edit /etc/pam.d/system-auth directly, as it is managed by authselect). On Arch/Manjaro: edit
     /etc/pam.d/system-auth. Modifying PAM files via scripts is too hazardous for automated fixing.'
   fix_sudo: false
   affected_file: /etc/pam.d/common-password (Debian/Ubuntu/openSUSE) or /etc/pam.d/system-auth and /etc/pam.d/password-auth
@@ -926,15 +819,6 @@ checksuites:
     lock out users.
 - id: pass-history
   description: Prevent password reuse by remembering at least the last 5 passwords, including for root.
-  # Runtime PAM file detection: system-auth on RHEL/Fedora/Arch,
-  # common-password on Debian/Ubuntu/openSUSE. On the RHEL family the module
-  # must be present in BOTH system-auth (local logins) and password-auth
-  # (remote logins), so both are checked when they exist.
-  #
-  # The control flag differs per distribution: pam-auth-update writes
-  # 'requisite' on Debian/Ubuntu, RHEL/Arch use 'required'. Both are accepted.
-  # remember= is accepted at 5 or higher, and enforce_for_root is required —
-  # without it pam_pwhistory silently skips UID 0.
   command: |
     files=""
     for f in /etc/pam.d/system-auth /etc/pam.d/password-auth /etc/pam.d/common-password; do
@@ -953,7 +837,7 @@ checksuites:
   fix: 'Manual action required: Add ''password required pam_pwhistory.so remember=5 enforce_for_root use_authtok'' to the
     password PAM stack, before the pam_unix.so line. On Debian/Ubuntu/OpenSUSE/SUSE: /etc/pam.d/common-password (persist
     via a profile in /usr/share/pam-configs/, since pam-auth-update overwrites direct edits). On RHEL/Rocky/AlmaLinux/Fedora:
-    apply via an authselect custom profile so that BOTH /etc/pam.d/system-auth and /etc/pam.d/password-auth are updated —
+    apply via an authselect custom profile so that BOTH /etc/pam.d/system-auth and /etc/pam.d/password-auth are updated -
     these files are symlinks into the authselect profile and must not be edited directly. On Arch/Manjaro: edit /etc/pam.d/system-auth.
     Also ensure /etc/security/opasswd is root-owned with mode 0600.'
   fix_sudo: false
@@ -967,10 +851,6 @@ checksuites:
 - id: pam-password-stack-order
   description: Verify that pam_pwquality and pam_pwhistory both appear before pam_unix in the password stack, without which
     neither can reject a password.
-  # Ordering is the silent failure mode of the whole password policy: once
-  # pam_unix.so has accepted and hashed a password, no later module can reject
-  # it, so a stack with pwquality/pwhistory after pam_unix passes every other
-  # check in this suite while enforcing nothing.
   command: |
     files=""
     for f in /etc/pam.d/system-auth /etc/pam.d/password-auth /etc/pam.d/common-password; do
@@ -1005,9 +885,6 @@ checksuites:
 - id: pam-unix-yescrypt
   description: Ensure pam_unix is configured to use a strong hashing algorithm (yescrypt preferred; sha512 acceptable where
     yescrypt is unavailable, e.g. RHEL-family).
-  # Detect the PAM file(s) and accept either algorithm — yescrypt on
-  # Debian/Ubuntu/Arch/openSUSE, sha512 on RHEL/Rocky/Fedora. Checked in every
-  # password stack present, so remote logins cannot fall back to a weaker hash.
   command: |
     files=""
     for f in /etc/pam.d/system-auth /etc/pam.d/password-auth /etc/pam.d/common-password; do
@@ -1090,10 +967,6 @@ checksuites:
 - id: 40-auth-02-pass-complexity
   description: Ensure password complexity enforces a minimum length of at least 14 characters (16 recommended).
   command: |
-    # Accepts any value >= 14 rather than the literal string 'minlen=14', so a
-    # stricter policy such as the minlen=16 recommended in the guide also passes.
-    # Also reads /etc/security/pwquality.conf.d/, which exists on the RHEL family
-    # and overrides pwquality.conf; the last definition wins, as pwquality does.
     v=$(grep -rhE '^[[:space:]]*minlen[[:space:]]*=' \
           /etc/security/pwquality.conf /etc/security/pwquality.conf.d/ 2>/dev/null \
         | tail -n1 | tr -dc '0-9')
@@ -1111,8 +984,6 @@ checksuites:
 - id: 43-auth-05-root-lock
   description: Ensure the root account is locked to prevent direct login.
   command: |
-    # Matches the status field explicitly rather than any 'L' on the line, and
-    # uses wc -l so that an unlocked root reports 0 instead of exiting 1.
     passwd -S root 2>/dev/null | awk '$2 ~ /^L/ {print}' | wc -l
   expected: 1
   sudo: true
@@ -1135,12 +1006,6 @@ labels:
 checksuites:
 - id: faillock-unlock-time
   description: Verify that the account lockout duration is at least 180 seconds.
-  # Runtime PAM file detection — see pam-stack-integration for the rationale.
-  # Note that on RHEL-family the modern place to configure faillock is
-  # /etc/security/faillock.conf via authselect; grepping the PAM stack still
-  # catches directly-edited entries.
-  # `grep -c` exits 1 when the count is 0, so a system with no faillock lines
-  # was reported as "command exited with code 1" rather than as failing.
   command: |
     f=/etc/pam.d/system-auth
     [ -f "$f" ] || f=/etc/pam.d/common-auth
@@ -1174,47 +1039,6 @@ checksuites:
   risk_desc: A shorter unlock time increases the effectiveness of automated brute-force attacks.
 
 ---
-title: Restricting Direct Root Login
-os: linux
-arch:
-- amd64
-- arm64
-labels:
-- auth
-checksuites:
-- id: 67-auth-15-pam-securetty
-  description: Ensure pam_securetty.so is enabled to restrict root logins to specific terminals.
-  command: |
-    grep -E '^\s*auth\s+required\s+pam_securetty.so' /etc/pam.d/login | wc -l
-  expected: 1
-  sudo: false
-  fix: 'Manual action required: Add ''auth required pam_securetty.so'' to /etc/pam.d/login.'
-  fix_sudo: false
-  affected_file: /etc/pam.d/login
-  post_action: None
-  security_level: high
-  risk_level: medium
-  risk_desc: Ensures root cannot log in from unauthorized TTYs. Risk of lockout if local console access is the only remaining
-    login method.
-- id: 68-auth-16-securetty-config
-  description: Verify that /etc/securetty exists and contains a restricted list of terminals.
-  command: |
-    [ -f /etc/securetty ] && grep -v '^#' /etc/securetty | grep -qv '^\s*$' && echo 1 || echo 0
-  expected: 1
-  sudo: true
-  fix: 'Manual action required: Create /etc/securetty and list only the necessary consoles (e.g., ''console'', ''tty1'').'
-  fix_sudo: false
-  affected_file: /etc/securetty
-  post_action: None
-  security_level: high
-  risk_level: high
-  risk_desc: Improper configuration can block access via the emergency or serial console.
-
----
-
-# =========================================================================
-# Phase 5 - File System Permissions and Isolation
-# =========================================================================
 
 title: Enforce Restrictive Default Umask
 os: linux
@@ -1226,12 +1050,6 @@ labels:
 checksuites:
 - id: 81-fs-10-umask-login-defs
   description: Verify that the default system-wide umask in /etc/login.defs is set to 027 or stricter.
-  # Authoritative setting: consumed by pam_umask.so, so it applies to ALL PAM
-  # sessions (console, SSH, su, graphical), and by useradd for the mode of new
-  # home directories. Anchored at end of line so that e.g. 0777 cannot match.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
   command: |
     grep -hE '^[[:space:]]*UMASK[[:space:]]+0?(27|77)[[:space:]]*$' /etc/login.defs 2>/dev/null | wc -l
   expected: 1
@@ -1248,14 +1066,6 @@ checksuites:
 - id: 82-fs-11-umask-shell-profile
   description: Verify that a restrictive umask (027 or stricter) is set for Bourne-style login shells, as a backstop for systems
     whose PAM session stack does not include pam_umask.so.
-  # NOT redundant with 81-fs-10. login.defs is enforced by PAM and covers every
-  # session type; this covers login shells started outside a PAM session and
-  # distributions that ship no pam_umask.so in the session stack.
-  #
-  # /etc/profile.d/*.sh is scanned in addition to /etc/profile, because
-  # /etc/profile is a package-managed conffile on every supported distribution
-  # and the guide mandates a drop-in rather than a direct edit. Scanning only
-  # /etc/profile made the recommended implementation fail this check.
   command: |
     files="/etc/profile"
     for f in /etc/profile.d/*.sh; do
@@ -1267,7 +1077,7 @@ checksuites:
   sudo: false
   fix: 'Manual action required: Create /etc/profile.d/50-umask.sh applying ''umask 027'' to accounts at or above UID_MIN and
     ''umask 022'' below it (see the guide for the conditional block; use `id -u`, not $UID, so it also works under dash).
-    Do not edit /etc/profile directly — it is a package-managed file and direct edits are lost or cause conffile conflicts
+    Do not edit /etc/profile directly. It is a package-managed file and direct edits are lost or cause conffile conflicts
     on upgrade.'
   fix_sudo: true
   affected_file: /etc/profile.d/50-umask.sh
@@ -1300,56 +1110,6 @@ checksuites:
   risk_desc: Modifying permissions on critical system directories can lead to system instability.
 
 ---
-title: Hardening the Proc Filesystem
-os: linux
-arch:
-- amd64
-- arm64
-labels:
-- kernel
-checksuites:
-- id: proc-hidepid-configured
-  description: Verify that the /proc filesystem is configured in /etc/fstab to use the 'hidepid=2' mount option to restrict
-    process visibility.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  command: |
-    # Tolerant of tabs and of extra options around hidepid=.
-    grep -hE '^[[:space:]]*proc[[:space:]]+/proc[[:space:]]+proc[[:space:]]+.*hidepid=(2|invisible)' \
-      /etc/fstab 2>/dev/null | wc -l
-  expected: 1
-  expected_op: '>='
-  sudo: false
-  fix: 'Manual action required: Edit /etc/fstab and ensure the /proc entry includes the mandatory option ''hidepid=2''. Then
-    run ''sudo mount -o remount /proc''.'
-  fix_sudo: true
-  affected_file: /etc/fstab
-  post_action: Remount the /proc filesystem (sudo mount -o remount /proc) or reboot the system.
-  security_level: high
-  risk_level: medium
-  risk_desc: Restricting process visibility can interfere with system monitoring tools (e.g., automated checks, centralized
-    monitoring agents) and user-facing utilities (e.g., 'ps', 'top'). Thorough testing is required.
-- id: proc-hidepid-runtime
-  description: Verify that the /proc filesystem is currently mounted with the 'hidepid=2' option enforced at runtime.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  command: |
-    findmnt -n -k -o OPTIONS /proc 2>/dev/null | tr ',' '\n' \
-      | grep -xE 'hidepid=(2|invisible)' | wc -l
-  expected: 1
-  expected_op: '>='
-  sudo: false
-  fix: 'Manual action required: Run ''sudo mount -o remount /proc'' to apply the setting from /etc/fstab, or reboot the system.'
-  fix_sudo: true
-  affected_file: Kernel runtime status
-  post_action: None
-  security_level: high
-  risk_level: low
-  risk_desc: This is purely a verification check; no runtime risk is introduced.
-
----
 title: Audit and Restrict SUID/SGID Executables
 os: linux
 arch:
@@ -1379,9 +1139,6 @@ checksuites:
 - id: find-binary-not-suid
   description: Verify that the 'find' utility binary itself does not have the SUID bit set, preventing potential misuse during
     filesystem traversal.
-  # Use `command -v` (POSIX, unlike `which` which isn't always installed on Arch
-  # minimal), then test the SUID bit directly with `find -perm -4000` instead of
-  # the previous `grep -c '4'` which incorrectly counted any digit '4' in the mode.
   command: |
     fp=$(command -v find 2>/dev/null || echo /usr/bin/find)
     [ -e "$fp" ] || { echo 0; exit 0; }
@@ -1445,16 +1202,6 @@ labels:
 checksuites:
 - id: audit-files-no-user
   description: Audit all files on local filesystems that are owned by a numeric UID not defined in /etc/passwd (no valid user).
-  # Upstream issue #6: this reported thousands of false positives on any host
-  # running rootless containers (Podman, rootless Docker). A user namespace maps
-  # container UIDs into the subordinate range declared in /etc/subuid, and those
-  # IDs deliberately have no corresponding host account - that absence IS the
-  # isolation boundary, not a defect. Worse, the previous remediation advice
-  # ('chown root <file>') would have destroyed the container installation and
-  # the data in it.
-  # IDs falling inside a range declared in /etc/subuid are therefore excluded. Files
-  # outside those ranges are still reported, so genuinely orphaned files left by
-  # a deleted account are unaffected.
   command: |
     sub=/etc/subuid
     [ -f "$sub" ] || sub=/dev/null
@@ -1479,16 +1226,6 @@ checksuites:
   risk_desc: Re-owning files is destructive and irreversible. Unowned files are usually the remains of a deleted account, but may also belong to a container runtime or a removable filesystem mounted from another host.
 - id: audit-files-no-group
   description: Audit all files on local filesystems that are owned by a numeric GID not defined in /etc/group (no valid group).
-  # Upstream issue #6: this reported thousands of false positives on any host
-  # running rootless containers (Podman, rootless Docker). A user namespace maps
-  # container UIDs into the subordinate range declared in /etc/subuid, and those
-  # IDs deliberately have no corresponding host account - that absence IS the
-  # isolation boundary, not a defect. Worse, the previous remediation advice
-  # ('chown root <file>') would have destroyed the container installation and
-  # the data in it.
-  # IDs falling inside a range declared in /etc/subgid are therefore excluded. Files
-  # outside those ranges are still reported, so genuinely orphaned files left by
-  # a deleted account are unaffected.
   command: |
     sub=/etc/subgid
     [ -f "$sub" ] || sub=/dev/null
@@ -1513,60 +1250,6 @@ checksuites:
   risk_desc: Re-grouping files is destructive and irreversible. Ungrouped files are usually the remains of a deleted group, but may also belong to a container runtime or a removable filesystem mounted from another host.
 
 ---
-title: Polyinstantiation of Temporary Directories
-os: linux
-arch:
-- amd64
-- arm64
-labels:
-- filesystem
-checksuites:
-- id: pam-namespace-active
-  description: Verify that the pam_namespace.so module is active in the session stack for local logins to initiate directory
-    isolation.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  command: |
-    grep -hE '^[[:space:]]*session[[:space:]]+required[[:space:]]+pam_namespace\.so' \
-      /etc/pam.d/login /etc/pam.d/sshd 2>/dev/null | wc -l
-  expected: 1
-  expected_op: '>='
-  sudo: false
-  fix: 'Manual action required: Add the line ''session required pam_namespace.so'' to the session stack in /etc/pam.d/login
-    and /etc/pam.d/sshd.'
-  fix_sudo: true
-  affected_file: /etc/pam.d/login
-  post_action: None. Users must log out and log back in for changes to apply.
-  security_level: high
-  risk_level: medium
-  risk_desc: Incorrect placement of the pam_namespace.so module in the PAM stack can cause login failures, potentially locking
-    out users if not thoroughly tested.
-- id: tmp-polyinstantiation-config
-  description: Verify that /tmp and /var/tmp are configured for user-based polyinstantiation in /etc/security/namespace.conf.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  command: |
-    grep -hE '^[[:space:]]*/tmp[[:space:]]+\S+[[:space:]]+\S+' \
-      /etc/security/namespace.conf /etc/security/namespace.d/*.conf 2>/dev/null | wc -l
-  expected: 1
-  expected_op: '>='
-  sudo: false
-  fix: 'Manual action required: Add the required polyinstantiation lines to /etc/security/namespace.conf for /tmp and /var/tmp.'
-  fix_sudo: true
-  affected_file: /etc/security/namespace.conf
-  post_action: None.
-  security_level: high
-  risk_level: high
-  risk_desc: This feature can break applications that rely on a globally shared /tmp for inter-process communication (IPC)
-    between different user sessions or services.
-
----
-
-# =========================================================================
-# Phase 6 - Kernel and Network Stack Parameters
-# =========================================================================
 
 title: Kernel Hardening
 os: linux
@@ -1578,11 +1261,6 @@ labels:
 checksuites:
 - id: 14-kernel-01-dmesg-restrict
   description: Restrict access to the kernel message buffer (dmesg) to root only to prevent information leakage.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/kernel/dmesg_restrict 2>/dev/null || echo 0
   expected: 1
@@ -1599,11 +1277,6 @@ checksuites:
   risk_desc: Prevents non-root users from viewing kernel logs. May impact debugging tools running as user.
 - id: 15-kernel-02-randomize-va-space
   description: Enable Address Space Layout Randomization (ASLR) to prevent buffer overflow exploits.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/kernel/randomize_va_space 2>/dev/null || echo 0
   expected: 2
@@ -1620,11 +1293,6 @@ checksuites:
   risk_desc: Standard security feature on modern Linux.
 - id: 16-kernel-03-disable-core-dumps
   description: Restrict core dumps (fs.suid_dumpable) to prevent sensitive memory from being written to disk during crashes.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 1 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/fs/suid_dumpable 2>/dev/null || echo 1
   expected: 0
@@ -1641,15 +1309,7 @@ checksuites:
   risk_desc: Inhibits debugging of crashing services. Developers may need this re-enabled temporarily.
 - id: 17-kernel-04-yama-ptrace-scope
   description: Restrict ptrace to prevent unprivileged processes from inspecting sibling processes.
-  # Requires the Yama LSM — not compiled into every kernel (e.g. openSUSE Leap
-  # 15.6 default). Skip with a neutral "missing" state where /proc/sys/kernel/yama
-  # is absent rather than falsely reporting a hardening failure.
   requires_file: /proc/sys/kernel/yama/ptrace_scope
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0
   expected: 1
@@ -1667,11 +1327,6 @@ checksuites:
   risk_desc: May interfere with gdb/strace for non-root users.
 - id: 18-kernel-05-kptr-restrict
   description: Hide kernel symbols/addresses from unprivileged users to mitigate KASLR bypass attacks.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/kernel/kptr_restrict 2>/dev/null || echo 0
   expected: 2
@@ -1688,11 +1343,6 @@ checksuites:
   risk_desc: Essential for protecting against kernel exploits; minimal impact on normal operations.
 - id: 19-kernel-06-ebpf-unprivileged-disabled
   description: Disable unprivileged eBPF to reduce the kernel attack surface.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/kernel/unprivileged_bpf_disabled 2>/dev/null || echo 0
   expected: 1
@@ -1709,11 +1359,6 @@ checksuites:
   risk_desc: Breaks non-root performance tracing and specific network filters.
 - id: 20-kernel-07-ebpf-jit-hardening
   description: Enable eBPF JIT hardening to mitigate JIT spraying and information leaks.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/core/bpf_jit_harden 2>/dev/null || echo 0
   expected: 2
@@ -1728,39 +1373,8 @@ checksuites:
   security_level: high
   risk_level: medium
   risk_desc: Setting bpf_jit_harden=2 disables eBPF JIT for all programs; on client systems this can significantly degrade performance of browser-based seccomp filters.
-- id: 21-kernel-08-userns-clone-disabled
-  description: Disable unprivileged user namespace creation to limit attack surface.
-  command: |
-    # kernel.unprivileged_userns_clone is a Debian/Ubuntu patch and does not
-    # exist on RHEL/Rocky/Fedora/Arch kernels, where `cat` exited 1 and the
-    # runner reported an error. There the equivalent control is
-    # user.max_user_namespaces=0, which is accepted as compliant.
-    if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then
-      cat /proc/sys/kernel/unprivileged_userns_clone
-    elif [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo -1)" = "0" ]; then
-      echo 0
-    else
-      echo 1
-    fi
-  expected: 0
-  sudo: true
-  fix: |
-    sudo mkdir -p /etc/sysctl.d/
-    sudo touch /etc/sysctl.d/10-kernel-hardening.conf
-    echo 'kernel.unprivileged_userns_clone=0' | sudo tee -a /etc/sysctl.d/10-kernel-hardening.conf
-  fix_sudo: true
-  affected_file: /etc/sysctl.d/10-kernel-hardening.conf
-  post_action: Run 'sudo sysctl -p /etc/sysctl.d/10-kernel-hardening.conf'.
-  security_level: high
-  risk_level: high
-  risk_desc: 'CRITICAL: Breaks rootless containers (Podman), Flatpaks, and browser sandboxing.'
 - id: 22-kernel-09-protected-fifos
   description: Enable strict FIFO protection to prevent race conditions in named pipes.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/fs/protected_fifos 2>/dev/null || echo 0
   expected: 2
@@ -1777,15 +1391,6 @@ checksuites:
   risk_desc: Prevents a common class of local privilege escalation.
 - id: 23-mod-01-blacklist-dccp
   description: Blacklist the DCCP protocol module to reduce the network attack surface.
-  # Upstream issue #7: with exact equality, blacklisting dccp in two files (say
-  # blacklist-unnecessary.conf and blacklist-dccp.conf) produced a count of 2 and
-  # failed the check, so a more thoroughly hardened system scored worse. Now
-  # 'at least one', matching the convention used elsewhere in this ruleset.
-  # Upstream issue #3: stderr is merged into stdout by the runner, so an
-  # unreadable file under /etc/modprobe.d (mode 0640) previously prepended
-  # 'Permission denied' lines to the compared value. stderr is now discarded.
-  # 'install dccp /bin/true' is accepted as well, since it is a stronger control
-  # than blacklist and the guide recommends it for usb-storage.
   command: |
     grep -rhE '^[[:space:]]*(blacklist[[:space:]]+dccp|install[[:space:]]+dccp[[:space:]]+/bin/(true|false))[[:space:]]*$' \
       /etc/modprobe.d/ /run/modprobe.d/ /usr/lib/modprobe.d/ 2>/dev/null | wc -l
@@ -1804,15 +1409,6 @@ checksuites:
   risk_desc: Only impacts applications using the Datagram Congestion Control Protocol.
 - id: 24-mod-02-blacklist-sctp
   description: Blacklist the SCTP protocol module to reduce the network attack surface.
-  # Upstream issue #7: with exact equality, blacklisting sctp in two files (say
-  # blacklist-unnecessary.conf and blacklist-sctp.conf) produced a count of 2 and
-  # failed the check, so a more thoroughly hardened system scored worse. Now
-  # 'at least one', matching the convention used elsewhere in this ruleset.
-  # Upstream issue #3: stderr is merged into stdout by the runner, so an
-  # unreadable file under /etc/modprobe.d (mode 0640) previously prepended
-  # 'Permission denied' lines to the compared value. stderr is now discarded.
-  # 'install sctp /bin/true' is accepted as well, since it is a stronger control
-  # than blacklist and the guide recommends it for usb-storage.
   command: |
     grep -rhE '^[[:space:]]*(blacklist[[:space:]]+sctp|install[[:space:]]+sctp[[:space:]]+/bin/(true|false))[[:space:]]*$' \
       /etc/modprobe.d/ /run/modprobe.d/ /usr/lib/modprobe.d/ 2>/dev/null | wc -l
@@ -1831,11 +1427,6 @@ checksuites:
   risk_desc: Disables Stream Control Transmission Protocol.
 - id: 25-net-01-syn-cookies
   description: Enable TCP SYN cookies to mitigate SYN flood Denial of Service (DoS) attacks.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/tcp_syncookies 2>/dev/null || echo 0
   expected: 1
@@ -1852,12 +1443,7 @@ checksuites:
   risk_desc: Activates only under high load/attack. No impact on normal traffic.
 - id: 26-net-02-rp-filter
   description: Enable Reverse Path Filtering (Anti-spoofing) to validate source addresses. Any non-zero value (1=strict, 2=loose)
-    is acceptable — some distros default to 2.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
+    is acceptable, as some distros default to 2.
   command: |
     cat /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || echo 0
   expected: 1
@@ -1872,11 +1458,6 @@ checksuites:
   risk_desc: Strict mode (1) may drop packets in asymmetric routing environments. Use loose mode (2) if connectivity fails.
 - id: 27-net-03-accept-redirects
   description: Disable acceptance of ICMP redirects to prevent routing table manipulation (MITM).
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 1 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/conf/all/accept_redirects 2>/dev/null || echo 1
   expected: 0
@@ -1890,11 +1471,6 @@ checksuites:
   risk_desc: Safe to disable unless the network relies on dynamic legacy routing updates.
 - id: 28-net-04-source-route
   description: Disable acceptance of packets with source routing options.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 1 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/conf/all/accept_source_route 2>/dev/null || echo 1
   expected: 0
@@ -1908,11 +1484,6 @@ checksuites:
   risk_desc: Source routing is deprecated and rarely used; disabling has no operational risk.
 - id: 29-net-05-bogus-icmp
   description: Ignore ICMP packets with bogus error responses to reduce log noise and potential DoS.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 0 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/icmp_ignore_bogus_error_responses 2>/dev/null || echo 0
   expected: 1
@@ -1926,11 +1497,6 @@ checksuites:
   risk_desc: Pure security measure; no impact on legitimate traffic.
 - id: 30-net-06-ipv4-ip_forward-disabled
   description: Ensure IP forwarding is disabled.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 1 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 1
   expected: 0
@@ -1947,11 +1513,6 @@ checksuites:
   risk_desc: Prevents routing packets between network interfaces.
 - id: 31-net-07-ipv4-conf-all-send_redirects-disabled
   description: Disable ICMP send_redirects.
-  # The knob is absent on kernels/architectures that do not implement it (for
-  # this one: older kernels, a missing LSM, or a different distro kernel
-  # config). `cat` then exited 1 and the runner reported "command exited with
-  # code 1" instead of a finding. 1 is reported instead, which fails the
-  # check cleanly and legibly.
   command: |
     cat /proc/sys/net/ipv4/conf/all/send_redirects 2>/dev/null || echo 1
   expected: 0
@@ -1966,44 +1527,6 @@ checksuites:
   security_level: baseline
   risk_level: low
   risk_desc: Safe security change for standard operations.
-- id: 32-mod-01-disable-usb-storage
-  description: Prevent the 'usb-storage' kernel module from loading.
-  # Upstream issues #7 and #3, as for the dccp/sctp blacklists: 'at least one'
-  # match rather than exactly one, and stderr discarded so that an unreadable
-  # file in /etc/modprobe.d cannot corrupt the compared value.
-  command: |
-    grep -rhE '^[[:space:]]*install[[:space:]]+usb-storage[[:space:]]+/bin/(true|false)[[:space:]]*$' \
-      /etc/modprobe.d/ /run/modprobe.d/ /usr/lib/modprobe.d/ 2>/dev/null | wc -l
-  expected: 1
-  expected_op: '>='
-  sudo: true
-  fix: |
-    echo 'install usb-storage /bin/true' | sudo tee /etc/modprobe.d/blacklist-usb-storage.conf
-  fix_sudo: true
-  affected_file: /etc/modprobe.d/blacklist-usb-storage.conf
-  post_action: Reboot required to unload active modules.
-  security_level: high
-  risk_level: medium
-  risk_desc: Disables ALL USB mass storage devices.
-- id: 33-crypto-01-fips-mode
-  description: Ensure the OS implements NIST FIPS-validated cryptography (Auditing only).
-  # The knob is absent unless the relevant support is compiled in/installed,
-  # in which case `cat` exited 1 and the runner reported an error. Absence is
-  # semantically "not enabled", so 0 is reported instead.
-  command: |
-    cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0
-  expected: 1
-  sudo: false
-  fix: 'Manual action required: Enabling FIPS requires installing certified packages (e.g., ubuntu-fips) and modifying the
-    bootloader. Automated fixing is unsafe.'
-  fix_sudo: false
-  affected_file: /boot/grub/grub.cfg
-  post_action: N/A
-  security_level: high
-  risk_level: high
-  risk_desc: Enabling FIPS often disables non-compliant crypto (e.g., certain SSH ciphers), potentially locking out remote
-    access.
-
 ---
 title: IPv6 Attack Surface Reduction
 os: linux
@@ -2017,10 +1540,6 @@ checksuites:
 - id: ipv6-accept-redirects-disabled
   description: Disable acceptance of ICMPv6 redirects to prevent Man-in-the-Middle routing manipulation.
   command: |
-    # When the IPv6 stack is disabled entirely (ipv6.disable=1 on the kernel
-    # command line) /proc/sys/net/ipv6 does not exist and `cat` exited 1, which
-    # the runner reported as an error. A system with no IPv6 stack is not
-    # exposed to this control's attack surface, so it is reported as compliant.
     [ -d /proc/sys/net/ipv6 ] || { echo 0; exit 0; }
     cat /proc/sys/net/ipv6/conf/all/accept_redirects 2>/dev/null || echo 0
   expected: 0
@@ -2039,10 +1558,6 @@ checksuites:
 - id: ipv6-source-route-disabled
   description: Disable acceptance of IPv6 packets with source routing options.
   command: |
-    # When the IPv6 stack is disabled entirely (ipv6.disable=1 on the kernel
-    # command line) /proc/sys/net/ipv6 does not exist and `cat` exited 1, which
-    # the runner reported as an error. A system with no IPv6 stack is not
-    # exposed to this control's attack surface, so it is reported as compliant.
     [ -d /proc/sys/net/ipv6 ] || { echo 0; exit 0; }
     cat /proc/sys/net/ipv6/conf/all/accept_source_route 2>/dev/null || echo 0
   expected: 0
@@ -2061,10 +1576,6 @@ checksuites:
 - id: ipv6-privacy-extensions
   description: Verify that IPv6 Privacy Extensions (RFC 4941) are enabled.
   command: |
-    # When the IPv6 stack is disabled entirely (ipv6.disable=1 on the kernel
-    # command line) /proc/sys/net/ipv6 does not exist and `cat` exited 1, which
-    # the runner reported as an error. A system with no IPv6 stack is not
-    # exposed to this control's attack surface, so it is reported as compliant.
     [ -d /proc/sys/net/ipv6 ] || { echo 2; exit 0; }
     cat /proc/sys/net/ipv6/conf/all/use_tempaddr 2>/dev/null || echo 2
   expected: 2
@@ -2083,10 +1594,6 @@ checksuites:
 - id: ipv6-router-advertisements-restricted
   description: Ensure the system ignores Hop Limit and other configuration flags in Router Advertisements.
   command: |
-    # When the IPv6 stack is disabled entirely (ipv6.disable=1 on the kernel
-    # command line) /proc/sys/net/ipv6 does not exist and `cat` exited 1, which
-    # the runner reported as an error. A system with no IPv6 stack is not
-    # exposed to this control's attack surface, so it is reported as compliant.
     [ -d /proc/sys/net/ipv6 ] || { echo 1; exit 0; }
     cat /proc/sys/net/ipv6/conf/all/accept_ra_pinfo 2>/dev/null || echo 1
   expected: 1
@@ -2114,8 +1621,6 @@ labels:
 checksuites:
 - id: 67-hosts-loopback-ipv4
   description: Verify that the IPv4 loopback address (127.0.0.1) is correctly configured for localhost.
-  # Regex tolerates Arch's default "127.0.0.1 localhost.localdomain localhost"
-  # by allowing intermediate aliases before the "localhost" token.
   command: |
     grep -E '^\s*127\.0\.0\.1[[:space:]]+([^#[:space:]]+[[:space:]]+)*localhost([[:space:]]|$)' /etc/hosts | wc -l
   expected: 1
@@ -2131,8 +1636,6 @@ checksuites:
   risk_desc: Essential for local services to resolve correctly.
 - id: 68-hosts-loopback-ipv6
   description: Verify that the IPv6 loopback address (::1) is correctly configured for localhost.
-  # Accept either "localhost" or the Debian/Ubuntu default "ip6-localhost"
-  # and tolerate multiple aliases on the line.
   command: |
     grep -E '^\s*::1[[:space:]]+([^#[:space:]]+[[:space:]]+)*(localhost|ip6-localhost)([[:space:]]|$)' /etc/hosts | wc -l
   expected: 1
@@ -2147,8 +1650,6 @@ checksuites:
   risk_desc: Prevents resolution delays or failures in IPv6-enabled applications.
 - id: 69-hosts-hostname-resolution
   description: Verify that the system hostname is correctly mapped in the hosts file.
-  # Fall back to `hostnamectl --static` then /etc/hostname because the plain
-  # `hostname` binary isn't always installed on Arch/openSUSE minimal images.
   command: |
     HN=$( (command -v hostname >/dev/null 2>&1 && hostname) \
           || (command -v hostnamectl >/dev/null 2>&1 && hostnamectl --static 2>/dev/null) \
@@ -2168,10 +1669,6 @@ checksuites:
   risk_desc: Ensures system tools can resolve the local hostname without external DNS.
 
 ---
-
-# =========================================================================
-# Phase 7 - Services and Network Exposure
-# =========================================================================
 
 title: Verifying that Vulnerable and Not Required Software Is Disabled
 os: linux
@@ -2198,8 +1695,6 @@ checksuites:
   risk_desc: Removes packages that transmit data in clear text.
 - id: svc-disable-avahi
   description: Ensure the Avahi daemon is disabled/masked or not installed at all.
-  # Passes unless the unit is actively "enabled". "not-found", "disabled",
-  # "masked", "static", "indirect", empty, etc. all count as "not enabled".
   command: |
     state=$(systemctl is-enabled avahi-daemon.service 2>/dev/null | tr -d '[:space:]' || true)
     if [ "$state" = "enabled" ] || [ "$state" = "alias" ]; then echo 0; else echo 1; fi
@@ -2214,12 +1709,7 @@ checksuites:
   risk_desc: Disables mDNS/Zero-conf networking.
 - id: cups-localhost-only
   description: Verify that the CUPS printing service is restricted to the localhost interface.
-  # Upstream issue #3: the runner merges stderr into stdout and compares the
-  # combined buffer against `expected`, so a "No such file or directory" or
-  # "Permission denied" line silently corrupts the compared value. stderr is
-  # discarded here so the result depends only on the system state.
   command: |
-    # Passes when CUPS is not installed at all: no cupsd.conf means no listener.
     [ -f /etc/cups/cupsd.conf ] || { echo 1; exit 0; }
     grep -rhE '^[[:space:]]*Listen[[:space:]]+(localhost:631|127\.0\.0\.1:631|/run/cups/cups\.sock)' \
       /etc/cups/cupsd.conf 2>/dev/null | wc -l
@@ -2237,7 +1727,6 @@ checksuites:
 - id: svc-disable-bluetooth
   description: Ensure Bluetooth services are disabled/masked or not installed on systems where wireless communication is not
     required.
-  # Same pattern as svc-disable-avahi — pass unless the unit is enabled.
   command: |
     state=$(systemctl is-enabled bluetooth.service 2>/dev/null | tr -d '[:space:]' || true)
     if [ "$state" = "enabled" ] || [ "$state" = "alias" ]; then echo 0; else echo 1; fi
@@ -2301,8 +1790,6 @@ labels:
 checksuites:
 - id: cups-browsed-disabled
   description: The cups-browsed service must be disabled or masked to prevent automatic printer discovery and reduce the attack surface.
-  # This check PASSES on 0. `grep -c` exits 1 when the count is 0, so the
-  # compliant system was the one being reported as an error.
   command: |
     out=$(systemctl is-enabled cups-browsed 2>/dev/null)
     printf '%s\n' "$out" | grep -cx enabled || true
@@ -2328,9 +1815,7 @@ labels:
 checksuites:
 - id: samba-service-inactive-or-not-installed
   description: The Samba service must be inactive and disabled, or not installed, to minimize the attack surface. Unit
-    names differ by distro — smbd/nmbd on Debian/Ubuntu/RHEL-family/SUSE, but smb/nmb on Arch's samba package.
-  # This check PASSES on 0, which is exactly the count at which `grep -c`
-  # exits 1 and the runner reports "command exited with code 1".
+    names differ by distro, with smbd/nmbd on Debian/Ubuntu/RHEL-family/SUSE, but smb/nmb on Arch's samba package.
   command: |
     { systemctl is-enabled smbd 2>/dev/null; systemctl is-enabled nmbd 2>/dev/null; } \
       | grep -cx enabled || true
@@ -2361,18 +1846,7 @@ labels:
 checksuites:
 - id: 64-dns-loopback-bind
   description: Verify that local DNS resolver services are restricted to the loopback address to prevent network exposure.
-  # Whole 127.0.0.0/8 is loopback — systemd-resolved binds to 127.0.0.53/54
-  # on Ubuntu/Debian, which the previous regex incorrectly flagged as
-  # non-loopback.
-  # Upstream issue #3: the runner merges stderr into stdout and compares the
-  # combined buffer against `expected`, so a "No such file or directory" or
-  # "Permission denied" line silently corrupts the compared value. stderr is
-  # discarded here so the result depends only on the system state.
-  # Also guards `ss` being absent on minimal installs, which produced
-  # "sudo: ss: command not found" as the compared value.
   command: |
-    # Whole 127.0.0.0/8 is loopback - systemd-resolved binds 127.0.0.53/54 on
-    # Ubuntu/Debian, which an earlier regex incorrectly flagged as non-loopback.
     command -v ss >/dev/null 2>&1 || { echo 0; exit 0; }
     ss -tuln 2>/dev/null \
       | awk 'NR>1 { n=split($5,a,":"); if (a[n]==53) print $5 }' \
@@ -2389,24 +1863,6 @@ checksuites:
   risk_desc: Incorrectly restricting addresses may break DNS for local virtual machines or containers.
 - id: 65-resolv-conf-perms
   description: Ensure the effective /etc/resolv.conf is owned by root and not writable by group or other.
-  # /etc/resolv.conf is a SYMLINK on most modern systems:
-  #   Ubuntu/Debian/Fedora/Arch (systemd-resolved) -> /run/systemd/resolve/stub-resolv.conf
-  #   openSUSE (netconfig)                         -> /run/netconfig/resolv.conf
-  #   RHEL/Rocky/Alma (NetworkManager)             -> regular file, rewritten in place
-  #
-  # The previous check ran `stat -c '%a' /etc/resolv.conf` and compared the
-  # result numerically against 644. That was wrong on three counts:
-  #   1. `stat -c '%a'` does NOT dereference a symlink, so on every systemd-
-  #      resolved system it returned 777 (a symlink's mode is always 0777 on
-  #      Linux and cannot be chmod'ed) — 777 <= 644 is false, so the check
-  #      failed permanently on Ubuntu, Debian, Fedora and Arch.
-  #   2. Numeric comparison of an octal mode is not a security predicate: 620 is
-  #      "<= 644" but is group-writable, while 600 and 640 are both fine.
-  #   3. `chmod 0644` on a resolved target under /run touches a tmpfs file that
-  #      systemd-resolved regenerates on every boot, so the fix never persisted.
-  #
-  # This resolves the link explicitly and asserts the two properties that
-  # actually matter: root ownership, and no write bit for group or other.
   command: |
     t=$(readlink -f /etc/resolv.conf 2>/dev/null)
     [ -n "$t" ] && [ -e "$t" ] || { echo 0; exit 0; }
@@ -2421,8 +1877,8 @@ checksuites:
   affected_file: /etc/resolv.conf (symlink target is chown'ed/chmod'ed, not the link itself)
   post_action: 'If the resolved target is under /run (systemd-resolved, netconfig), it is regenerated on every boot and this
     fix does NOT persist. On such systems the durable control is the integrity of /etc/systemd/resolved.conf(.d) or /etc/sysconfig/network/config,
-    which must be root-owned and not group- or world-writable. Do not use ''chattr +i'' on a resolver-managed /etc/resolv.conf
-    — it breaks systemd-resolved and NetworkManager updates.'
+    which must be root-owned and not group- or world-writable. Do not use ''chattr +i'' on a resolver-managed /etc/resolv.conf,
+    because it breaks systemd-resolved and NetworkManager updates.'
   security_level: baseline
   risk_level: low
   risk_desc: Standard permission hardening on an already root-owned file. Detects tampering rather than remediating a common
@@ -2430,17 +1886,18 @@ checksuites:
 - id: 66-dns-secure-transport
   description: Verify that the resolver uses DNS-over-TLS (DoT) or DNSSEC validation.
   command: |
-    grep -rhE '^\s*(DNSOverTLS|DNSSEC|tls-port)\s*=\s*(yes|on|[1-9])' /etc/systemd/resolved.conf /etc/unbound/ 2>/dev/null | wc -l
+    grep -rhE '^[[:space:]]*(DNSOverTLS[[:space:]]*=[[:space:]]*(yes|opportunistic)|DNSSEC[[:space:]]*=[[:space:]]*(yes|allow-downgrade)|tls-port)' \
+      /etc/systemd/resolved.conf /etc/systemd/resolved.conf.d/ /etc/unbound/ 2>/dev/null | wc -l
   expected: 1
   expected_op: '>='
   sudo: false
-  fix: 'Manual action required: Configure systemd-resolved to use DNSOverTLS=yes in /etc/systemd/resolved.conf.'
+  fix: 'Manual action required: Set DNSOverTLS=opportunistic in /etc/systemd/resolved.conf. Do NOT use DNSOverTLS=yes unless every configured resolver is known to support DNS-over-TLS: strict mode makes name resolution fail completely when it does not, which on a client looks like a total loss of network connectivity.'
   fix_sudo: true
   affected_file: Resolver configuration file
   post_action: Restart the resolver service.
   security_level: high
-  risk_level: high
-  risk_desc: Incorrect settings will break all internet name resolution.
+  risk_level: medium
+  risk_desc: Opportunistic mode encrypts where the resolver supports it and falls back to plain DNS otherwise, so it cannot break resolution. Strict mode (DNSOverTLS=yes) can.
 
 ---
 title: Configuring and Hardening the Host Firewall
@@ -2464,7 +1921,7 @@ checksuites:
     Manual action required: Enable and start your system's host firewall.
     On Ubuntu (UFW is preinstalled):
       sudo ufw enable
-    On Debian/Arch (no firewall frontend ships by default — install one first):
+    On Debian/Arch (no firewall frontend ships by default, install one first):
       sudo apt install ufw && sudo ufw enable          # Debian
       sudo pacman -S ufw && sudo systemctl enable --now ufw   # Arch
     On Rocky/AlmaLinux/Fedora/RHEL/SUSE (firewalld is preinstalled and usually already enabled):
@@ -2521,16 +1978,9 @@ checksuites:
   description: 'Enforce a ''Default Deny'' policy by ensuring /etc/hosts.deny contains ''ALL: ALL''. This ensures that only
     services explicitly listed in /etc/hosts.allow are accessible. /etc/hosts.deny ships out of the box on Debian/Ubuntu
     (netbase) and is present on RHEL/Rocky/Fedora/SUSE, but Arch ships neither the file nor a packaged tcp_wrappers
-    (only available via the AUR) — the check is skipped there instead of failing on a file that was never meant to exist.'
+    (only available via the AUR), so the check is skipped there instead of failing on a file that was never meant to exist.'
   requires_file: /etc/hosts.deny
-  # Upstream issue #3: the runner merges stderr into stdout and compares the
-  # combined buffer against `expected`, so a "No such file or directory" or
-  # "Permission denied" line silently corrupts the compared value. stderr is
-  # discarded here so the result depends only on the system state.
   command: |
-    # An absent /etc/hosts.deny is a finding (the default-deny rule is missing),
-    # not an error: previously grep wrote to stderr and, per issue #3, that text
-    # became the compared value.
     grep -hE '^[[:space:]]*ALL[[:space:]]*:[[:space:]]*ALL[[:space:]]*$' \
       /etc/hosts.deny 2>/dev/null | wc -l
   expected: 1
@@ -2545,7 +1995,7 @@ checksuites:
     Note: On Rocky/Fedora/RHEL, verify the tcp_wrappers package is installed:
       e.g., sudo dnf install tcp-wrappers   (RHEL/Rocky/Fedora)
             sudo zypper install tcpd         (SUSE)
-    On Arch, tcp_wrappers is only available via the AUR (e.g. yay -S tcp_wrappers) and is unmaintained upstream —
+    On Arch, tcp_wrappers is only available via the AUR (e.g. yay -S tcp_wrappers) and is unmaintained upstream -
     prefer nftables/firewalld/ufw rules over reviving it.
   fix_sudo: true
   affected_file: /etc/hosts.deny
@@ -2558,9 +2008,6 @@ checksuites:
   description: Ensure restrictive permissions (0644) are set on /etc/hosts.allow to prevent unauthorized modification of access
     control rules. Skipped on distros (e.g. Arch) that ship without this file.
   requires_file: /etc/hosts.allow
-  # `stat` exits 1 when the file does not exist (Arch and other systems that
-  # ship no TCP wrappers files), which the runner reported as an error rather
-  # than as the finding it is.
   command: |
     stat -c '%a' /etc/hosts.allow 2>/dev/null || echo missing
   expected: 644
@@ -2576,7 +2023,6 @@ checksuites:
   description: Ensure restrictive permissions (0644) are set on /etc/hosts.deny. Skipped on distros (e.g. Arch) that ship
     without this file.
   requires_file: /etc/hosts.deny
-  # See hosts-allow-permissions: absent file exited 1 instead of reporting.
   command: |
     stat -c '%a' /etc/hosts.deny 2>/dev/null || echo missing
   expected: 644
@@ -2591,10 +2037,6 @@ checksuites:
 
 ---
 
-# =========================================================================
-# Phase 8 - Time, Logging and Auditing
-# =========================================================================
-
 title: Secure Time Synchronization (Chrony)
 os: linux
 arch:
@@ -2606,12 +2048,6 @@ checksuites:
 - id: chronyd-active
   description: Verify that a time synchronization service (chrony or systemd-timesyncd) is actively running to ensure accurate
     timekeeping.
-  # Check each service in sequence — the pipe/OR pattern from the previous
-  # version dropped output from the fallback branch. Any one being active is
-  # enough (expected_op: '>=').
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
   command: |
     {
       systemctl is-active chronyd 2>/dev/null
@@ -2634,9 +2070,6 @@ checksuites:
 - id: chronyd-non-root
   description: Verify that the time-sync daemon (chrony or systemd-timesyncd) runs as an unprivileged user to minimize the impact
     of a potential compromise.
-  # Use /proc directly — `ps` isn't always installed on minimal images
-  # (openSUSE Leap 15.6 base). Match chronyd/chrony/systemd-timesyncd; report
-  # 1 (pass) if all matching processes run as non-root.
   command: |
     matched=0
     non_root=0
@@ -2666,9 +2099,6 @@ checksuites:
   risk_desc: This is usually the default setting in modern distributions and only confirms privilege separation.
 - id: chrony-cmd-restriction
   description: Ensure that Chrony's command interface (for control and monitoring) is restricted to the localhost interface.
-  # Detect the config file at runtime: /etc/chrony/chrony.conf on Debian/Ubuntu,
-  # /etc/chrony.conf on RHEL-family/openSUSE/Arch. Skip cleanly if chrony
-  # isn't installed (neither file present).
   command: |
     f=/etc/chrony/chrony.conf
     [ -f "$f" ] || f=/etc/chrony.conf
@@ -2691,12 +2121,7 @@ checksuites:
 - id: chrony-nts-config
   description: Verify that Network Time Security (NTS) is configured on at least one time source to cryptographically authenticate
     the time provided.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
   command: |
-    # Debian/Ubuntu use /etc/chrony/chrony.conf, RHEL/Rocky/Fedora and
-    # openSUSE use /etc/chrony.conf. Both are scanned, plus any drop-ins.
     grep -rhE '^[[:space:]]*(server|pool)[[:space:]]+\S+.*[[:space:]]nts([[:space:]]|$)' \
       /etc/chrony.conf /etc/chrony/chrony.conf /etc/chrony/conf.d/ /etc/chrony.d/ 2>/dev/null | wc -l
   expected: 1
@@ -2731,10 +2156,6 @@ labels:
 checksuites:
 - id: journald-persistent-storage
   description: Verify that journal storage is set to 'persistent' to retain forensic logs across reboots.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  # Also scans journald.conf.d/ drop-ins, which override journald.conf.
   command: |
     grep -hE '^[[:space:]]*Storage[[:space:]]*=[[:space:]]*persistent' \
       /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null | wc -l
@@ -2751,9 +2172,6 @@ checksuites:
   risk_desc: Changing storage creates the /var/log/journal directory, which is necessary for forensic integrity.
 - id: journald-compression-enabled
   description: Verify that log compression is not explicitly disabled (default is enabled).
-  # Expected value is 0 (the "Compress=no" line must be absent), which is the
-  # case where `grep -c` exits 1. Also scans journald.conf.d/ drop-ins, which
-  # override journald.conf and were previously invisible to this check.
   command: |
     grep -hE '^[[:space:]]*Compress[[:space:]]*=[[:space:]]*no' \
       /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null | wc -l
@@ -2771,8 +2189,6 @@ checksuites:
   description: Verify that the persistent journal directory (/var/log/journal) has restrictive permissions (e.g., 2755) and
     the SetGID bit set.
   command: |
-    # /var/log/journal is absent until persistent storage is enabled; `stat`
-    # then exited 1. Absence is a finding for this control, not an error.
     stat -c '%a' /var/log/journal 2>/dev/null || echo missing
   expected: 2755
   expected_op: <=
@@ -2798,10 +2214,6 @@ checksuites:
   description: Verify that the syslog daemon (e.g., rsyslog) is not listening on network ports (UDP 514, TCP 601) unless explicitly
     configured as a log collector.
   command: |
-    # Two problems: `ss` is absent on minimal installs (exit 127), and grep -cE
-    # '514|601' matched those digits ANYWHERE in the output - a client source
-    # port such as 35146, or an address like 10.6.0.1, counted as a syslog
-    # listener. The port is now compared as a field, not as a substring.
     command -v ss >/dev/null 2>&1 || { echo 0; exit 0; }
     ss -tuln 2>/dev/null \
       | awk 'NR>1 { n=split($5,a,":"); p=a[n]; if (p==514 || p==601) print }' \
@@ -2818,12 +2230,9 @@ checksuites:
   risk_desc: Disabling network listening reduces attack surface and does not impact local logging functionality.
 - id: syslog-critical-file-permissions
   description: Verify that the primary security log file has restrictive permissions (0640 or tighter). The file path differs
-    by distro — /var/log/auth.log on Debian/Ubuntu, /var/log/secure on RHEL-family, /var/log/messages on SUSE, and
+    by distro, with /var/log/auth.log on Debian/Ubuntu, /var/log/secure on RHEL-family, /var/log/messages on SUSE, and
     either (or neither, if only journald is used) on Arch.
   command: |
-    # Debian/Ubuntu use /var/log/auth.log; RHEL/Rocky/Fedora and openSUSE use
-    # /var/log/secure. The previous command hard-coded auth.log, so on the RHEL
-    # family `stat` exited 1 and the check errored on every run.
     for f in /var/log/auth.log /var/log/secure; do
       [ -e "$f" ] && { stat -c '%a' "$f"; exit 0; }
     done
@@ -2894,9 +2303,6 @@ checksuites:
   description: Verify that the auditd service is enabled to ensure that the auditing framework starts automatically upon system
     boot.
   requires_command: auditctl
-  # `systemctl is-enabled` exits non-zero (1 for disabled, 3 for inactive) and the
-  # runner reported that as an error instead of reading the word it printed.
-  # Capturing stdout and defaulting when the unit is unknown always exits 0.
   command: |
     out=$(systemctl is-enabled auditd 2>/dev/null)
     echo "${out:-disabled}"
@@ -2912,9 +2318,6 @@ checksuites:
 - id: auditd-service-active
   description: Verify that the auditd service is currently running actively to ensure continuous security event logging.
   requires_command: auditctl
-  # `systemctl is-active` exits non-zero (1 for disabled, 3 for inactive) and the
-  # runner reported that as an error instead of reading the word it printed.
-  # Capturing stdout and defaulting when the unit is unknown always exits 0.
   command: |
     out=$(systemctl is-active auditd 2>/dev/null)
     echo "${out:-inactive}"
@@ -2940,17 +2343,6 @@ checksuites:
 - id: audit-identity-file-changes
   description: Verify rules exist to monitor all write and attribute changes to critical identity files (/etc/passwd, /etc/shadow,
     /etc/sudoers).
-  # Three separate failure modes were combined here:
-  #   1. `grep -c` exits 1 when nothing matches, so a legitimate "0"
-  #      was reported by the runner as "command exited with code 1".
-  #   2. With a glob matching several files, `grep -c` prints one
-  #      "file:count" line per file instead of a single number.
-  #   3. If no *.rules file exists the shell passes the glob through
-  #      literally and grep exits 2 with "No such file or directory".
-  # `grep -h ... | wc -l` counts matching lines across all files, prints
-  # exactly one number, and always exits 0.
-  # Upstream issue #8 (bug A). The -p permission set is matched by content rather
-  # than as the literal string 'wa', so a broader rule such as -p rwa also counts.
   command: |
     grep -hE '^[[:space:]]*-w[[:space:]]+/etc/shadow[[:space:]]+-p[[:space:]]+[rwxa]*w[rwxa]*a' \
       /etc/audit/rules.d/*.rules 2>/dev/null | wc -l
@@ -2973,18 +2365,6 @@ checksuites:
   risk_desc: Incorrect audit rules may fail to log critical events, but will not affect system stability.
 - id: audit-privilege-executables
   description: Verify rules exist to monitor the successful execution of privilege escalation binaries (su and sudo).
-  # Three separate failure modes were combined here:
-  #   1. `grep -c` exits 1 when nothing matches, so a legitimate "0"
-  #      was reported by the runner as "command exited with code 1".
-  #   2. With a glob matching several files, `grep -c` prints one
-  #      "file:count" line per file instead of a single number.
-  #   3. If no *.rules file exists the shell passes the glob through
-  #      literally and grep exits 2 with "No such file or directory".
-  # `grep -h ... | wc -l` counts matching lines across all files, prints
-  # exactly one number, and always exits 0.
-  # Upstream issue #8: tolerant of an -F arch=... field preceding -F path=, which
-  # several distributions emit. The trailing word boundary is required so that
-  # the rule for /usr/bin/sudo is not counted as the rule for /usr/bin/su.
   command: |
     grep -hE '^[[:space:]]*-a[[:space:]]+always,exit\b.*-F[[:space:]]+path=/usr/bin/su\b' \
       /etc/audit/rules.d/*.rules 2>/dev/null | wc -l
@@ -3017,24 +2397,6 @@ labels:
 checksuites:
 - id: audit-file-attribute-changes
   description: Verify rules exist to monitor critical syscalls that modify file permissions and ownership (e.g., chmod, chown).
-  # Three separate failure modes were combined here:
-  #   1. `grep -c` exits 1 when nothing matches, so a legitimate "0"
-  #      was reported by the runner as "command exited with code 1".
-  #   2. With a glob matching several files, `grep -c` prints one
-  #      "file:count" line per file instead of a single number.
-  #   3. If no *.rules file exists the shell passes the glob through
-  #      literally and grep exits 2 with "No such file or directory".
-  # `grep -h ... | wc -l` counts matching lines across all files, prints
-  # exactly one number, and always exits 0.
-  # Upstream issue #8 (bug B): the previous pattern required -S to follow
-  # always,exit directly, but every real auditd rule places -F arch=b64 (or
-  # b32) in between:
-  #     -a always,exit -F arch=b64 -S chmod,... -F auid>=1000 -k ...
-  # so the check could never pass on a correctly configured system.
-  # chmod is matched with word boundaries so it does not also match fchmod or
-  # fchmodat, and so it is still found inside a comma-separated syscall list.
-  # Issue #8 (bug A) - grep -c printing one 'file:count' line per file, and
-  # exiting 1 on a zero count - was already addressed by counting with wc -l.
   command: |
     grep -hE '^[[:space:]]*-a[[:space:]]+always,exit\b.*[[:space:]]-S[[:space:]]+[a-z0-9_,]*\bchmod\b' \
       /etc/audit/rules.d/*.rules 2>/dev/null | wc -l
@@ -3057,24 +2419,6 @@ checksuites:
 - id: audit-file-deletion-activity
   description: Verify rules exist to monitor syscalls related to file and directory deletion (e.g., unlink, rmdir) across
     the filesystem.
-  # Three separate failure modes were combined here:
-  #   1. `grep -c` exits 1 when nothing matches, so a legitimate "0"
-  #      was reported by the runner as "command exited with code 1".
-  #   2. With a glob matching several files, `grep -c` prints one
-  #      "file:count" line per file instead of a single number.
-  #   3. If no *.rules file exists the shell passes the glob through
-  #      literally and grep exits 2 with "No such file or directory".
-  # `grep -h ... | wc -l` counts matching lines across all files, prints
-  # exactly one number, and always exits 0.
-  # Upstream issue #8 (bug B): the previous pattern required -S to follow
-  # always,exit directly, but every real auditd rule places -F arch=b64 (or
-  # b32) in between:
-  #     -a always,exit -F arch=b64 -S unlink,... -F auid>=1000 -k ...
-  # so the check could never pass on a correctly configured system.
-  # Matches unlink inside the usual 'unlink,unlinkat,rename,renameat' list
-  # without also matching unlinkat on its own.
-  # Issue #8 (bug A) - grep -c printing one 'file:count' line per file, and
-  # exiting 1 on a zero count - was already addressed by counting with wc -l.
   command: |
     grep -hE '^[[:space:]]*-a[[:space:]]+always,exit\b.*[[:space:]]-S[[:space:]]+[a-z0-9_,]*\bunlink\b' \
       /etc/audit/rules.d/*.rules 2>/dev/null | wc -l
@@ -3097,23 +2441,6 @@ checksuites:
 - id: audit-kernel-module-loading
   description: Verify rules exist to monitor kernel integrity by logging attempts to load or unload kernel modules (init_module,
     delete_module).
-  # Three separate failure modes were combined here:
-  #   1. `grep -c` exits 1 when nothing matches, so a legitimate "0"
-  #      was reported by the runner as "command exited with code 1".
-  #   2. With a glob matching several files, `grep -c` prints one
-  #      "file:count" line per file instead of a single number.
-  #   3. If no *.rules file exists the shell passes the glob through
-  #      literally and grep exits 2 with "No such file or directory".
-  # `grep -h ... | wc -l` counts matching lines across all files, prints
-  # exactly one number, and always exits 0.
-  # Upstream issue #8 (bug B): the previous pattern required -S to follow
-  # always,exit directly, but every real auditd rule places -F arch=b64 (or
-  # b32) in between:
-  #     -a always,exit -F arch=b64 -S init_module,... -F auid>=1000 -k ...
-  # so the check could never pass on a correctly configured system.
-  # Word boundaries keep init_module from matching finit_module.
-  # Issue #8 (bug A) - grep -c printing one 'file:count' line per file, and
-  # exiting 1 on a zero count - was already addressed by counting with wc -l.
   command: |
     grep -hE '^[[:space:]]*-a[[:space:]]+always,exit\b.*[[:space:]]-S[[:space:]]+[a-z0-9_,]*\binit_module\b' \
       /etc/audit/rules.d/*.rules 2>/dev/null | wc -l
@@ -3140,9 +2467,6 @@ labels:
 checksuites:
 - id: audit-immutable-rule-config
   description: Verify that the mandatory rule to set the audit configuration to immutable is the last line in the ruleset.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
   command: |
     tail -n 1 /etc/audit/rules.d/99-finalize.rules 2>/dev/null \
       | grep -xE '[[:space:]]*-e[[:space:]]+2[[:space:]]*' | wc -l
@@ -3159,14 +2483,6 @@ checksuites:
     if the ruleset is flawed and causes a Denial of Service (DoS) due to excessive logging.
 - id: audit-immutable-mode-runtime
   description: Verify that the kernel's audit system is currently operating in immutable mode, preventing runtime tampering.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
-  # Also guards the case where auditd is not installed at all, which
-  # previously produced "command not found" rather than a clean 0.
   command: |
     command -v auditctl >/dev/null 2>&1 || { echo 0; exit 0; }
     auditctl -s 2>/dev/null | grep -c 'enabled 2' || true
@@ -3182,10 +2498,6 @@ checksuites:
   risk_desc: This is purely a verification check for the most critical audit security feature.
 
 ---
-
-# =========================================================================
-# Phase 9 - Runtime Confinement
-# =========================================================================
 
 title: Mandatory Access Control (MAC) Implementation
 os: linux
@@ -3317,7 +2629,7 @@ labels:
 checksuites:
 - id: gnome-lock-enabled
   description: Ensure the GNOME screensaver is configured to lock the screen after a period of inactivity. Only applicable
-    on systems with a GNOME desktop installed (skipped elsewhere) — irrelevant on headless servers regardless of distro,
+    on systems with a GNOME desktop installed (skipped elsewhere) and irrelevant on headless servers regardless of distro,
     and on Arch/Debian/RHEL-family systems installed without a desktop environment at all.
   requires_command: gsettings
   command: gsettings get org.gnome.desktop.screensaver lock-enabled
@@ -3357,9 +2669,6 @@ checksuites:
 - id: usbguard-service-active
   description: Verify that the USBGuard service is installed, enabled, and running to enforce USB device policies.
   requires_command: usbguard
-  # `systemctl is-active` exits non-zero (1 for disabled, 3 for inactive) and the
-  # runner reported that as an error instead of reading the word it printed.
-  # Capturing stdout and defaulting when the unit is unknown always exits 0.
   command: |
     out=$(systemctl is-active usbguard 2>/dev/null)
     echo "${out:-inactive}"
@@ -3375,9 +2684,6 @@ checksuites:
     lockout.
 - id: usbguard-policy-exists
   description: Verify that a restrictive default policy is configured in /etc/usbguard/rules.conf.
-  # A bare `grep -c` exits 1 when the count is 0, and the runner reports
-  # that as "command exited with code 1" instead of reading the 0 it printed.
-  # Counting with `| wc -l` always exits 0 and always prints one number.
   command: |
     grep -hxE '[[:space:]]*block([[:space:]].*)?' /etc/usbguard/rules.conf 2>/dev/null | wc -l
   expected: '1'

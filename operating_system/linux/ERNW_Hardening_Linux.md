@@ -7,6 +7,8 @@ title: Hardening Guide
   - [Scope \& Application](#scope--application)
   - [How to Read and Use This Document](#how-to-read-and-use-this-document)
   - [Automated Auditing with `hardener`](#automated-auditing-with-hardener)
+          - [Obtaining and Building](#obtaining-and-building)
+          - [Audit, Fix and Rollback](#audit-fix-and-rollback)
 - [Phase 0: Before You Begin](#phase-0-before-you-begin)
   - [How This Guide Is Sequenced](#how-this-guide-is-sequenced)
   - [Before You Start](#before-you-start)
@@ -20,17 +22,26 @@ title: Hardening Guide
   - [Partitioning and Mount Options](#partitioning-and-mount-options)
     - [Target Layout](#target-layout)
     - [Where These Options Break Things](#where-these-options-break-things)
+          - [`noexec` on `/tmp` is mandatory, but has known breakage](#noexec-on-tmp-is-mandatory-but-has-known-breakage)
+          - [`noexec` on `/home` MUST NOT be set](#noexec-on-home-must-not-be-set)
+          - [`noexec` on `/var` MUST NOT be set](#noexec-on-var-must-not-be-set)
     - [How Much Does a Separate `/home` Buy You?](#how-much-does-a-separate-home-buy-you)
     - [The Mount Options](#the-mount-options)
     - [Reference `/etc/fstab`](#reference-etcfstab)
+          - [Distribution and `systemd` Specifics](#distribution-and-systemd-specifics)
     - [Verification: the Expected End State](#verification-the-expected-end-state)
     - [Applying Changes](#applying-changes)
     - [Encryption (LUKS)](#encryption-luks)
+          - [Setting up a LUKS Partition](#setting-up-a-luks-partition)
+          - [Automated Unlocking via `/etc/crypttab`](#automated-unlocking-via-etccrypttab)
+          - [Swap Encryption](#swap-encryption)
     - [Additional Filesystem Hardening](#additional-filesystem-hardening)
   - [Secure GRUB Bootloader with a Password](#secure-grub-bootloader-with-a-password)
     - [Password Protection Strategy](#password-protection-strategy)
     - [Implementation Steps](#implementation-steps)
-    - [3. Finalizing the Configuration](#3-finalizing-the-configuration)
+          - [Generate the Hash](#generate-the-hash)
+        - [Configure the Users](#configure-the-users)
+    - [Finalizing the Configuration](#finalizing-the-configuration)
   - [UEFI Secure Boot Verification](#uefi-secure-boot-verification)
     - [Verification of Secure Boot Status](#verification-of-secure-boot-status)
     - [Verification of User Mode](#verification-of-user-mode)
@@ -38,8 +49,11 @@ title: Hardening Guide
 - [Phase 2: Base System Integrity](#phase-2-base-system-integrity)
   - [Verify Package Integrity](#verify-package-integrity)
     - [Verification by Distribution](#verification-by-distribution)
+          - [Debian and Ubuntu (`debsums`)](#debian-and-ubuntu-debsums)
+          - [RHEL, Fedora, and openSUSE (`rpm`)](#rhel-fedora-and-opensuse-rpm)
+          - [Arch Linux (`pacman`)](#arch-linux-pacman)
     - [Interpreting Discrepancies](#interpreting-discrepancies)
-    - [3. Proactive Monitoring with AIDE](#3-proactive-monitoring-with-aide)
+    - [Proactive Monitoring with AIDE](#proactive-monitoring-with-aide)
   - [CPU Microcode Updates](#cpu-microcode-updates)
     - [Installation of Microcode Packages](#installation-of-microcode-packages)
     - [Microcode Loading and Verification](#microcode-loading-and-verification)
@@ -47,9 +61,15 @@ title: Hardening Guide
   - [Kernel Command Line Hardening](#kernel-command-line-hardening)
     - [Memory Protection Rationale](#memory-protection-rationale)
     - [Prevent Initramfs Debug Shell Access](#prevent-initramfs-debug-shell-access)
+          - [Configuration by Distribution Family](#configuration-by-distribution-family)
+          - [Implementation](#implementation)
+          - [Example Modification (Debian/Ubuntu)](#example-modification-debianubuntu)
+          - [Example Modification (RHEL/Fedora)](#example-modification-rhelfedora)
+          - [Runtime Verification](#runtime-verification)
   - [Protecting Single User Mode](#protecting-single-user-mode)
     - [Authentication Requirement](#authentication-requirement)
     - [Configuration for Systemd (Modern Systems)](#configuration-for-systemd-modern-systems)
+          - [Manual Remediation](#manual-remediation)
     - [Operational Impact](#operational-impact)
   - [Disable Ctrl-Alt-Del Reboot Sequence](#disable-ctrl-alt-del-reboot-sequence)
     - [Hardening with `systemd`](#hardening-with-systemd)
@@ -65,15 +85,26 @@ title: Hardening Guide
     - [Restricting Su Usage](#restricting-su-usage)
   - [Check that All Passwords Are Shadowed](#check-that-all-passwords-are-shadowed)
     - [Verify Password Shadowing](#verify-password-shadowing)
+      - [Remediation](#remediation)
 - [Phase 4: Authentication and Password Policy](#phase-4-authentication-and-password-policy)
   - [Use Strong Hashing Algorithm](#use-strong-hashing-algorithm)
     - [Verify Hashing Algorithm](#verify-hashing-algorithm)
   - [Password Policy](#password-policy)
-    - [Password Complexity (`pam_pwquality.so`)](#password-complexity-pampwqualityso)
-    - [Password History (`pam_pwhistory.so`)](#password-history-pampwhistoryso)
-    - [Strong Hashing Algorithm (`pam_unix.so`)](#strong-hashing-algorithm-pamunixso)
+          - [Which File Holds the Password Stack](#which-file-holds-the-password-stack)
+    - [Password Complexity (`pam_pwquality.so`)](#password-complexity-pam_pwqualityso)
+    - [Password History (`pam_pwhistory.so`)](#password-history-pam_pwhistoryso)
+          - [The Password History File](#the-password-history-file)
+          - [Verification](#verification-1)
+    - [Strong Hashing Algorithm (`pam_unix.so`)](#strong-hashing-algorithm-pam_unixso)
     - [The Complete Password Stack](#the-complete-password-stack)
+          - [Debian and Ubuntu (`/etc/pam.d/common-password`)](#debian-and-ubuntu-etcpamdcommon-password)
+          - [RHEL, Rocky, AlmaLinux and Fedora (via the `authselect` profile)](#rhel-rocky-almalinux-and-fedora-via-the-authselect-profile)
+          - [Testing the Stack Without Locking Yourself Out](#testing-the-stack-without-locking-yourself-out)
   - [Password \& Account Aging](#password--account-aging)
+        - [Password Management Policy (`/etc/login.defs`)](#password-management-policy-etclogindefs)
+          - [Implementation](#implementation-1)
+          - [Verification](#verification-2)
+        - [Account Inactivity Defaults (`/etc/default/useradd`)](#account-inactivity-defaults-etcdefaultuseradd)
   - [User Authentication Hardening](#user-authentication-hardening)
     - [Strong Password Encryption](#strong-password-encryption)
     - [Minimum Password Length](#minimum-password-length)
@@ -81,39 +112,45 @@ title: Hardening Guide
   - [Account Lockout (Faillock)](#account-lockout-faillock)
     - [Account Lockout Policy Parameters](#account-lockout-policy-parameters)
     - [Configuration in `/etc/pam.d/common-auth`](#configuration-in-etcpamdcommon-auth)
+          - [Pre-authentication Stage (Tracking Failures):](#pre-authentication-stage-tracking-failures)
+          - [Authentication Failure Stage (Enforcing Lockout):](#authentication-failure-stage-enforcing-lockout)
   - [Restricting Direct Root Login](#restricting-direct-root-login)
-    - [Configuring PAM for Secure TTYs](#configuring-pam-for-secure-ttys)
-    - [Restricting the Secure TTY List](#restricting-the-secure-tty-list)
 - [Phase 5: File System Permissions and Isolation](#phase-5-file-system-permissions-and-isolation)
   - [Enforce Restrictive Default Umask](#enforce-restrictive-default-umask)
     - [Defining the Hardening Standards](#defining-the-hardening-standards)
     - [Implementation in System Configuration](#implementation-in-system-configuration)
+          - [Global Account Defaults (`/etc/login.defs`)](#global-account-defaults-etclogindefs)
+          - [Shell Session Initialization (`/etc/profile.d/`)](#shell-session-initialization-etcprofiled)
     - [Recommended Conditional Logic](#recommended-conditional-logic)
+          - [Verification](#verification-3)
   - [Securing the Path Environment Variable](#securing-the-path-environment-variable)
-    - [1. Check for Globally Writable Paths](#1-check-for-globally-writable-paths)
-    - [2. Location of PATH Configuration](#2-location-of-path-configuration)
+    - [Check for Globally Writable Paths](#check-for-globally-writable-paths)
+    - [Location of PATH Configuration](#location-of-path-configuration)
   - [Hardening the Proc Filesystem](#hardening-the-proc-filesystem)
-    - [Correctly Implementing Hidepid](#correctly-implementing-hidepid)
-    - [Applying Changes](#applying-changes-1)
   - [Audit and Restrict SUID/SGID Executables](#audit-and-restrict-suidsgid-executables)
     - [Auditing SUID/SGID Files](#auditing-suidsgid-files)
     - [Remediation Policy](#remediation-policy)
+          - [Remediation](#remediation-1)
+          - [Verification](#verification-4)
   - [World Writable File and Directory Audit](#world-writable-file-and-directory-audit)
     - [Auditing for World-Writable Files](#auditing-for-world-writable-files)
+          - [Remediation](#remediation-2)
     - [System Paths vs. Home Directories](#system-paths-vs-home-directories)
+          - [System-Wide Paths (`/etc`, `/usr`, `/var`)](#system-wide-paths-etc-usr-var)
+          - [User Home Directories (`/home/user`)](#user-home-directories-homeuser)
     - [Auditing for World-Writable Directories](#auditing-for-world-writable-directories)
     - [Remediation and Best Practices](#remediation-and-best-practices)
   - [Audit and Remediate Unowned and Ungrouped Files](#audit-and-remediate-unowned-and-ungrouped-files)
     - [Auditing for Unowned Files](#auditing-for-unowned-files)
     - [Auditing for Ungrouped Files](#auditing-for-ungrouped-files)
+          - [Remediation](#remediation-3)
   - [Polyinstantiation of Temporary Directories](#polyinstantiation-of-temporary-directories)
-    - [Configure Namespace Definitions](#configure-namespace-definitions)
-    - [Activate the PAM Module](#activate-the-pam-module)
-    - [Runtime Verification](#runtime-verification)
   - [Disable Core Dumps](#disable-core-dumps)
-    - [Disable Core Dumps](#disable-core-dumps-1)
     - [Configure User Limits (`/etc/security/limits.conf`)](#configure-user-limits-etcsecuritylimitsconf)
+          - [Verification](#verification-5)
     - [Disable the `systemd-coredump` Service](#disable-the-systemd-coredump-service)
+          - [Remediation](#remediation-4)
+          - [Verification](#verification-6)
 - [Phase 6: Kernel and Network Stack Parameters](#phase-6-kernel-and-network-stack-parameters)
   - [Kernel Hardening](#kernel-hardening)
     - [Runtime Self-Protection](#runtime-self-protection)
@@ -121,11 +158,16 @@ title: Hardening Guide
     - [Network Stack Parameters](#network-stack-parameters)
     - [Restricting Kernel Modules](#restricting-kernel-modules)
     - [Cryptography (FIPS)](#cryptography-fips)
+          - [Implementation Procedure](#implementation-procedure)
   - [IPv6 Attack Surface Reduction](#ipv6-attack-surface-reduction)
     - [IPv6 Stack Hardening](#ipv6-stack-hardening)
+          - [Privacy Extensions (Temporary Addresses)](#privacy-extensions-temporary-addresses)
+          - [Disabling Source Routing and Redirects](#disabling-source-routing-and-redirects)
+          - [Router Advertisements (RA) Policy](#router-advertisements-ra-policy)
+          - [Implementation Procedure](#implementation-procedure-1)
   - [Ensure Correct Loopback and Local Host Configuration](#ensure-correct-loopback-and-local-host-configuration)
     - [Loopback Configuration](#loopback-configuration)
-    - [2. Local Hostname Resolution](#2-local-hostname-resolution)
+    - [Local Hostname Resolution](#local-hostname-resolution)
 - [Phase 7: Services and Network Exposure](#phase-7-services-and-network-exposure)
   - [Verifying that Vulnerable and Not Required Software Is Disabled](#verifying-that-vulnerable-and-not-required-software-is-disabled)
     - [Remove Insecure Legacy Protocols](#remove-insecure-legacy-protocols)
@@ -135,15 +177,24 @@ title: Hardening Guide
     - [Eliminate the Server Attack Surface](#eliminate-the-server-attack-surface)
     - [Maintain the Secure Client](#maintain-the-secure-client)
   - [CUPS Security Hardening](#cups-security-hardening)
-    - [CUPS Security Hardening: Disabling `cups-browsed`](#cups-security-hardening-disabling-cups-browsed)
+    - [Disabling `cups-browsed`](#disabling-cups-browsed)
+          - [Service Status Verification](#service-status-verification)
+          - [Remediation Procedure](#remediation-procedure)
   - [Disable or Remove Unnecessary File Sharing Services (Samba)](#disable-or-remove-unnecessary-file-sharing-services-samba)
-    - [Disable or Remove Unnecessary File Sharing Services: Samba (SMB)](#disable-or-remove-unnecessary-file-sharing-services-samba-smb)
+    - [Samba (SMB)](#samba-smb)
+          - [Check and Disable the Samba Service](#check-and-disable-the-samba-service)
+          - [Removing the Samba Package](#removing-the-samba-package)
+          - [For Debian/Ubuntu-based Systems](#for-debianubuntu-based-systems)
+          - [For RHEL/CentOS-based Systems](#for-rhelcentos-based-systems)
+          - [For SUSE/openSUSE-based Systems](#for-suseopensuse-based-systems)
   - [DNS Resolver Security](#dns-resolver-security)
     - [Restrict Local Resolver Exposure](#restrict-local-resolver-exposure)
     - [Secure Transport and Validation](#secure-transport-and-validation)
     - [Protect Resolver Configuration](#protect-resolver-configuration)
+          - [`/etc/resolv.conf` Is Usually a Symbolic Link](#etcresolvconf-is-usually-a-symbolic-link)
+          - [The Actual Control](#the-actual-control)
   - [Configuring and Hardening the Host Firewall](#configuring-and-hardening-the-host-firewall)
-    - [Configuring and Hardening the Host Firewall](#configuring-and-hardening-the-host-firewall-1)
+          - [Firewall Status and Activation](#firewall-status-and-activation)
     - [Default Policy Hardening](#default-policy-hardening)
     - [Reviewing and Removing Rules](#reviewing-and-removing-rules)
   - [Configure TCP Wrappers and Hosts Access](#configure-tcp-wrappers-and-hosts-access)
@@ -154,17 +205,25 @@ title: Hardening Guide
 - [Phase 8: Time, Logging and Auditing](#phase-8-time-logging-and-auditing)
   - [Secure Time Synchronization (Chrony)](#secure-time-synchronization-chrony)
     - [Necessity of Time Synchronization](#necessity-of-time-synchronization)
+          - [Enforce Least Privileges](#enforce-least-privileges)
+          - [Restrict Network Access](#restrict-network-access)
+          - [Implement Network Time Security (NTS)](#implement-network-time-security-nts)
+        - [Implementation Procedure](#implementation-procedure-2)
   - [Systemd Journal Hardening and Integrity](#systemd-journal-hardening-and-integrity)
     - [Enforcing Persistent Storage (Forensic Integrity)](#enforcing-persistent-storage-forensic-integrity)
     - [Enabling Compression](#enabling-compression)
     - [Log Forwarding to Traditional Syslog](#log-forwarding-to-traditional-syslog)
     - [Protecting Persistent Log Directory](#protecting-persistent-log-directory)
+          - [Applying Changes](#applying-changes-1)
   - [Syslog Daemon Hardening](#syslog-daemon-hardening)
     - [Disable Network Listening (Attack Surface Reduction)](#disable-network-listening-attack-surface-reduction)
     - [Restrict Log File Permissions (Confidentiality)](#restrict-log-file-permissions-confidentiality)
     - [Secure Remote Forwarding](#secure-remote-forwarding)
   - [Audit Framework Installation and Setup](#audit-framework-installation-and-setup)
     - [Installation and Activation](#installation-and-activation)
+          - [Package Installation](#package-installation)
+          - [Service Enablement and Runtime Status](#service-enablement-and-runtime-status)
+          - [Verification of Audit Rules](#verification-of-audit-rules)
   - [Audit Rules for Identity and Privilege Escalation](#audit-rules-for-identity-and-privilege-escalation)
     - [Monitoring Critical Identity Files](#monitoring-critical-identity-files)
     - [Monitoring Privilege Escalation Binaries](#monitoring-privilege-escalation-binaries)
@@ -172,11 +231,17 @@ title: Hardening Guide
     - [Applying Rules](#applying-rules)
   - [Audit Rules for System Integrity and File Access](#audit-rules-for-system-integrity-and-file-access)
     - [Monitoring File Attribute Changes](#monitoring-file-attribute-changes)
+          - [Example Ruleset (Syscall Monitoring for Attribute Change)](#example-ruleset-syscall-monitoring-for-attribute-change)
     - [Monitoring File Deletion and Renaming](#monitoring-file-deletion-and-renaming)
+          - [Example Ruleset (Syscall Monitoring for Deletion)](#example-ruleset-syscall-monitoring-for-deletion)
     - [Monitoring Kernel Module Management](#monitoring-kernel-module-management)
+          - [Example Ruleset (Syscall Monitoring for Kernel Activity)](#example-ruleset-syscall-monitoring-for-kernel-activity)
     - [Applying Rules](#applying-rules-1)
   - [Enforcing Immutable Audit Configuration](#enforcing-immutable-audit-configuration)
+          - [Configuration](#configuration)
     - [Applying Immutable Mode](#applying-immutable-mode)
+          - [Initial Setup](#initial-setup)
+          - [Runtime Verification](#runtime-verification-1)
 - [Phase 9: Runtime Confinement](#phase-9-runtime-confinement)
   - [Mandatory Access Control (MAC) Implementation](#mandatory-access-control-mac-implementation)
     - [SELinux (Security-Enhanced Linux)](#selinux-security-enhanced-linux)
@@ -187,16 +252,28 @@ title: Hardening Guide
     - [Protect User Home Directories (`ProtectHome`)](#protect-user-home-directories-protecthome)
     - [Isolate Temporary Storage (`PrivateTmp`)](#isolate-temporary-storage-privatetmp)
     - [Applying Overrides](#applying-overrides)
+          - [Example Content](#example-content)
   - [Cron Security](#cron-security)
     - [`cron` And `at` Security](#cron-and-at-security)
+          - [Implementing the Allow-List Principle](#implementing-the-allow-list-principle)
     - [Configuration for `cron`](#configuration-for-cron)
     - [Configuration for `at`](#configuration-for-at)
   - [Session and Screen Lock Hardening](#session-and-screen-lock-hardening)
     - [Graphical Screen Lock (GUI)](#graphical-screen-lock-gui)
+          - [System-wide Enforcement (GNOME)](#system-wide-enforcement-gnome)
+          - [Apply Changes](#apply-changes)
     - [Summary of Controls](#summary-of-controls)
+          - [On Shell Session Timeouts (`TMOUT`)](#on-shell-session-timeouts-tmout)
   - [Install and Configure USBGuard](#install-and-configure-usbguard)
-    - [Install and Configure USBGuard](#install-and-configure-usbguard-1)
+          - [Installation](#installation)
+          - [Policy Configuration (`rules.conf`)](#policy-configuration-rulesconf)
+          - [Generating an Initial Policy](#generating-an-initial-policy)
+          - [Enforcing the Block-by-Default Policy](#enforcing-the-block-by-default-policy)
     - [Service Activation](#service-activation)
+          - [Start for Testing only](#start-for-testing-only)
+          - [Verification](#verification-7)
+          - [Enable at Boot (only After Successful Validation)](#enable-at-boot-only-after-successful-validation)
+          - [Applying Policy Changes](#applying-policy-changes)
 - [Phase 10: Verification and Maintenance](#phase-10-verification-and-maintenance)
   - [Confirming the Result](#confirming-the-result)
   - [Reboot and Re-verify](#reboot-and-re-verify)
@@ -345,6 +422,7 @@ following protocol makes every one of them recoverable, and MUST be followed for
 control marked with the lockout warning below.
 
 > **Warning (lockout risk):** This control can prevent you from logging in. Apply it under
+
 > the session safety protocol.
 
 1.  **Open a privileged session and keep it open.** On a local machine, a root shell on a
@@ -545,9 +623,6 @@ The following is a complete, working example for a UEFI system using LVM on LUKS
     /dev/mapper/vg0-vartmp    /var/tmp         ext4    defaults,nodev,nosuid,noexec            0      2
     tmpfs                     /tmp             tmpfs   defaults,nodev,nosuid,noexec,size=2G    0      0
     tmpfs                     /dev/shm         tmpfs   defaults,nodev,nosuid,noexec            0      0
-    proc                      /proc            proc    defaults,hidepid=2                      0      0
-
-The `/proc` entry is documented separately in *Hardening the Proc Filesystem*.
 
 > **Note:** Order matters. `/var/log` must appear after `/var`, and `/var/log/audit` after `/var/log`, or the later mount will be shadowed. `systemd-fstab-generator` sorts by path depth automatically, but a manual `mount -a` does not.
 
@@ -658,7 +733,7 @@ Beyond partitioning, specific permissions MUST be enforced:
 
 - **Critical files**: permissions for `/etc/shadow` (`640`, `root:shadow`) and `/etc/passwd` (`644`, `root:root`) MUST be strictly maintained to prevent unauthorized credential access.
 
-- **Temporary directory isolation**: private, per-user instances of `/tmp` and `/var/tmp` complement the mount options above by preventing information leakage *between* users. This is covered in *Polyinstantiation of Temporary Directories*.
+- **Temporary directory isolation**: per-user instances of `/tmp` and `/var/tmp` are discussed in *Polyinstantiation of Temporary Directories*, which explains why they are not recommended on a client.
 
 ## Secure GRUB Bootloader with a Password
 
@@ -693,7 +768,7 @@ Add the hash and the superuser name to `/etc/grub.d/40_custom` or a dedicated us
     set superusers="grub_admin"
     password_pbkdf2 grub_admin <YOUR_GENERATED_HASH>
 
-### 3. Finalizing the Configuration
+### Finalizing the Configuration
 
 After saving your changes, the GRUB configuration MUST be regenerated to write the new settings into the active boot file.
 
@@ -786,7 +861,7 @@ When a check fails, the tool provides codes indicating what changed. A *5* in RP
 
 Modifications to configuration files (often marked with a *c*) are expected if you have customized your system. \> **Note**: Changes to binaries in `/bin`, `/sbin`, or `/usr/bin` that you did not explicitly update MUST be treated as a potential security breach.
 
-### 3. Proactive Monitoring with AIDE
+### Proactive Monitoring with AIDE
 
 While package manager checks are useful, they rely on the package manager's own database, which attackers might also modify. *AIDE* (Advanced Intrusion Detection Environment) provides an independent cryptographic baseline for your most sensitive files.
 
@@ -1221,6 +1296,7 @@ The assembled stack looks like this.
     password required   pam_deny.so
 
 > **Warning (lockout risk):** Do not hand-edit the numeric jump in Debian's
+
 > `[success=2 default=ignore]`. It counts the modules to skip on success, so inserting or
 > removing a line after `pam_unix.so` silently breaks the stack. Add modules *before*
 > `pam_unix.so`, as shown, or let `pam-auth-update` regenerate the file.
@@ -1360,44 +1436,20 @@ The required configuration lines MUST be present in `/etc/pam.d/common-auth` as 
 
 ## Restricting Direct Root Login
 
-Direct login as the `root` user removes the ability to audit which specific individual performed privileged actions. To ensure non-repudiation and accountability, administrators MUST log in as a standard user and escalate privileges using `sudo` or `su`.
+Direct login as `root` removes the ability to attribute privileged actions to an individual.
+Administrators MUST log in as a standard user and escalate with `sudo`.
 
-> **Warning (lockout risk):** This control can prevent you from logging in or from reaching the system over the network. Apply it under the *Session Safety Protocol* described in Phase 0.
+On current distributions this is enforced by locking the `root` account (covered under
+*User Authentication Hardening*) and, for network access, by `PermitRootLogin no` in the
+SSH daemon configuration.
 
-While SSH configurations typically handle network-based root restrictions, local terminal access is controlled via PAM and the `/etc/securetty` file.
+> **Note:** Older baselines enforce this with `pam_securetty.so` and `/etc/securetty`. That
+> mechanism is obsolete and is deliberately not used here. `/etc/securetty` no longer ships
+> on current Debian and Ubuntu releases, and the RHEL family no longer references
+> `pam_securetty` in its login stack. Re-creating the file to satisfy an old benchmark risks
+> blocking console and serial console access, which on a machine with full disk encryption
+> can mean losing your only local recovery path.
 
-### Configuring PAM for Secure TTYs
-
-The system MUST check the `/etc/securetty` file during the login process. This is handled by the `pam_securetty.so` module.
-
-The file `/etc/pam.d/login` MUST contain the following configuration line:
-
-    auth required pam_securetty.so
-
-To verify that the module is active:
-
-    > grep "pam_securetty.so" /etc/pam.d/login
-    auth required pam_securetty.so
-
-### Restricting the Secure TTY List
-
-The `/etc/securetty` file lists the device names of the TTYs (terminals) where the root user is allowed to log in. If this file does not exist, most systems default to allowing root login on any TTY. If the file exists but is empty, root login is disabled on all devices.
-
-The `/etc/securetty` file MUST exist and SHOULD only contain the physical console and necessary serial terminals.
-
-> **Note:** On virtualized cloud systems (e.g., AWS, Azure, KVM), the "physical" console is often redirected to a serial port (e.g., `ttyS0` or `hvc0`). Removing these from `/etc/securetty` will block access via the provider's emergency web console.
-
-To safely configure this file for a standard physical server or desktop:
-
-    > echo -e "console\ntty1" | sudo tee /etc/securetty
-
-To check the current content of the file:
-
-    > cat /etc/securetty
-    console
-    tty1
-
-If the system requires serial console access (common for headless servers), ensure `ttyS0` (standard serial) or `hvc0` (Xen/virtualization) is included.
 
 # Phase 5: File System Permissions and Isolation
 
@@ -1488,7 +1540,7 @@ The `PATH` environment variable lists the directories searched by the shell for 
 
 The system MUST NOT include any globally writable directories in the default `PATH`.
 
-### 1. Check for Globally Writable Paths
+### Check for Globally Writable Paths
 
 Standard system directories like `/bin`, `/usr/bin`, `/sbin`, and `/usr/sbin` MUST NOT be writable by anyone except the `root` user.
 
@@ -1499,7 +1551,7 @@ Run the following command to check common system directories for the world-writa
 
 The output MUST be empty. Any listed directory represents an immediate security risk and requires manual intervention.
 
-### 2. Location of PATH Configuration
+### Location of PATH Configuration
 
 The `PATH` variable is usually defined in global shell configuration files. You should review these to ensure no insecure or relative paths (like `.`) are being added:
 
@@ -1515,31 +1567,23 @@ The `PATH` variable is usually defined in global shell configuration files. You 
 
 ## Hardening the Proc Filesystem
 
-The `/proc` filesystem provides a window into the running kernel and processes. By default, any local user can inspect nearly all process information, including the process ID (PID), command line arguments, environment variables, and memory maps of other users, including service accounts and the root user. This information leakage is critical for attackers performing reconnaissance or planning a local privilege escalation (LPE) attack.
+The `/proc` filesystem exposes the command line, environment and memory maps of every
+running process, which is useful reconnaissance for a local attacker.
 
-The system MUST restrict visibility into the `/proc` filesystem using the `hidepid` mount option.
+The usual control is the `hidepid=2` mount option. It is deliberately **not** mandated in
+this guide, because on a desktop client it breaks the session: `systemd --user`, `polkit`
+and parts of the GNOME and KDE session need to see processes they do not own, and
+`hidepid` without a correctly configured `gid=` option leaves users unable to log in
+graphically.
 
-### Correctly Implementing Hidepid
+If you need it on a server, apply it with a group exemption and test a login before
+relying on it:
 
-The `hidepid` option is applied to the `proc` filesystem definition in `/etc/fstab`. Setting `hidepid` to `2` provides the highest level of security by making process directories (`/proc/<PID>`) invisible to users who are not the process owner and are not part of the specified administrative group.
+    proc /proc proc defaults,hidepid=2,gid=<admin_gid> 0 0
 
-The `hidepid=2` setting ensures: \* Processes are invisible to unprivileged users unless they belong to the process's owning group. \* The system only reveals processes necessary for the user to see (typically only their own, or system-critical processes via the designated group).
+For a client, the practical protections against the same reconnaissance are already in this
+guide: `kernel.dmesg_restrict`, `kernel.kptr_restrict` and `kernel.yama.ptrace_scope`.
 
-To enforce this, ensure your `/etc/fstab` entry for `/proc` includes the `hidepid=2` option:
-
-    proc    /proc   proc    defaults,hidepid=2      0       0
-
-> **Note:** If you need specific administrative users (e.g., members of the `adm` or `monitoring` group) to see all processes, you should use the combination `defaults,hidepid=2,gid=<group_id>`. This allows users in that `<group_id>` to view all processes, while denying access to others.
-
-### Applying Changes
-
-After modifying `/etc/fstab`, the change MUST be applied by remounting the `/proc` filesystem:
-
-    > sudo mount -o remount /proc
-
-#### Verification
-
-After applying the changes, an unprivileged user attempting to list the `/proc` directory should only see a limited number of directories (mostly virtual files, and their own process directories if `gid` is not used).
 
 ## Audit and Restrict SUID/SGID Executables
 
@@ -1665,44 +1709,21 @@ Reassigning the file ensures that future user creation or system operations will
 
 ## Polyinstantiation of Temporary Directories
 
-Polyinstantiation is an advanced hardening technique that utilizes Linux namespaces and mount points to provide each user or session with a private, isolated instance of a directory. This is primarily aimed at high-risk, world-writable directories such as `/tmp` and `/var/tmp`.
+Polyinstantiation gives each user a private `/tmp` and `/var/tmp`, which prevents
+information leaking between users through predictable temporary filenames.
 
-The isolation prevents unauthorized information leakage and denial-of-service (DoS) attacks, as files created by one user (or a sensitive service) are invisible to other unprivileged users. This is a mandatory control for systems handling highly sensitive data.
+It is **not** recommended for a client. A shared `/tmp` is load-bearing on a desktop
+session: the X11 socket directory `/tmp/.X11-unix`, PulseAudio and PipeWire sockets and a
+number of application IPC paths all live there, and giving each session a private namespace
+breaks them. A misplaced `pam_namespace.so` line in the session stack also prevents login
+outright.
 
-### Configure Namespace Definitions
+On a single-user client the threat it addresses, one local user reading another's temporary
+files, largely does not exist. The mount options in *Partitioning and Mount Options*
+(`nodev,nosuid,noexec` on `/tmp`) and the sticky bit cover the realistic cases.
 
-The file `/etc/security/namespace.conf` defines which directories should be polyinstantiated, what type of user/group should be isolated, and the type of temporary filesystem to use (e.g., `tmpfs`).
-
-The following lines MUST be added to `/etc/security/namespace.conf` to isolate the temporary directories based on the user ID (`user`) upon login:
-
-    # Directory   Type   Context    Method
-    /tmp         tmpfs  user       create
-    /var/tmp     tmpfs  user       create
-
-This configuration instructs the system to create a new, private `/tmp` and `/var/tmp` directory instance every time a new user session begins.
-
-### Activate the PAM Module
-
-The logic for applying polyinstantiation and manipulating the mount namespace at login is handled by the **`pam_namespace.so`** module. This module MUST be activated in the session stack of the relevant PAM configuration files (`/etc/pam.d/login` and `/etc/pam.d/sshd` are common targets).
-
-The following entry MUST be present in the session stack of the PAM configuration files:
-
-    session required pam_namespace.so
-
-> **Warning:** Due to the complexity of the PAM stack and the potential for disrupting critical services, enabling `pam_namespace.so` MUST be tested rigorously. Misconfiguration can lead to the inability to start remote or local sessions.
-
-### Runtime Verification
-
-After implementing the configuration and logging in as two different unprivileged users (UserA and UserB), run the `mount` command in both sessions and filter for the temporary directories:
-
-    > mount | grep tmp
-    tmpfs on /tmp type tmpfs (rw,nosuid,nodev,relatime,size=...)
-
-While the mount point remains `/tmp`, the underlying mount namespace and contents are isolated. You MUST verify that a file created by UserA in `/tmp` is not visible or accessible by UserB.
 
 ## Disable Core Dumps
-
-### Disable Core Dumps
 
 A core dump is a memory image file created by the operating system when a program terminates unexpectedly (crashes). While useful for developers and system administrators for debugging purposes, core dump files often contain sensitive data, including passwords, encryption keys, and proprietary information that was held in memory at the time of the crash. Storing these files on disk represents a significant data confidentiality risk.
 
@@ -1770,7 +1791,7 @@ While eBPF provides powerful tracing and networking capabilities, it also presen
 
 - **eBPF Restrictions**: Setting `kernel.unprivileged_bpf_disabled=1` prevents non-root users from loading eBPF programs. Additionally, `net.core.bpf_jit_harden=2` enables JIT hardening to mitigate JIT spraying attacks.
 
-- **User Namespace Cloning**: Setting `kernel.unprivileged_userns_clone=0` disables unprivileged user namespace creation. \> **Note:** This is a high-security setting that will break rootless containers (Podman), Flatpaks, and certain browser sandboxes.
+- **User Namespace Cloning**: disabling unprivileged user namespaces (`kernel.unprivileged_userns_clone=0`) is deliberately *not* recommended here. It breaks Flatpak and rootless containers, and it also disables the user-namespace sandboxes that Chromium and Firefox rely on, so on a desktop client it removes more protection than it adds.
 
 - **Filesystem Protection**: Setting `fs.protected_fifos=2` enables strict FIFO protection to prevent race conditions in named pipes, a common class of local privilege escalation.
 
@@ -1798,13 +1819,18 @@ In a Zero Trust environment, the client must protect itself even from the local 
 
 Unnecessary kernel modules can contain vulnerabilities. If a feature is not used, its code should not be allowed to execute.
 
-- **USB Mass Storage**: For high-security environments, the `usb-storage` module can be blacklisted to prevent any USB drives from being mounted, stopping data exfiltration or malware entry.
+- **USB Mass Storage**: blacklisting the `usb-storage` module is a common recommendation, but it disables *every* USB mass storage device on the machine, permanently and for every user. On a client that is a functional regression rather than a hardening measure, and it is not part of this guide. Where removable media genuinely has to be controlled, use USBGuard, which authorises devices individually and can be adjusted without a reboot.
 
 - **Legacy Protocols**: Protocols like `DCCP` (Datagram Congestion Control Protocol) and `SCTP` (Stream Control Transmission Protocol) are rarely used on desktops and should be blacklisted to close potential network entry points.
 
 ### Cryptography (FIPS)
 
-For environments requiring high regulatory compliance, the OS should implement NIST FIPS-validated cryptography. This is typically audited via `/proc/sys/crypto/fips_enabled`. Enabling FIPS mode requires specific bootloader modifications and certified packages; it cannot be safely toggled via simple runtime commands as it may disable non-compliant SSH ciphers or other crypto primitives.
+FIPS-validated cryptography is a regulatory requirement for specific environments, not a
+client hardening control, and it is not part of this guide. Enabling FIPS mode requires
+certified packages and bootloader changes, and it disables non-compliant algorithms, which
+can break SSH connectivity and other services. Where it is mandated, follow the
+distribution vendor's procedure rather than a generic hardening step.
+
 
 ###### Implementation Procedure
 
@@ -1819,7 +1845,6 @@ To apply these settings persistently, create dedicated configuration files:
     kernel.kptr_restrict=2
     kernel.unprivileged_bpf_disabled=1
     net.core.bpf_jit_harden=2
-    kernel.unprivileged_userns_clone=0
     fs.protected_fifos=2
     EOF
 
@@ -1836,7 +1861,6 @@ To apply these settings persistently, create dedicated configuration files:
 
     # Module Blacklisting
     > sudo tee /etc/modprobe.d/blacklist-unnecessary.conf <<EOF
-    install usb-storage /bin/true
     blacklist dccp
     blacklist sctp
     EOF
@@ -1917,7 +1941,7 @@ To verify these are present, use *grep* with a focus on the start of the line:
     > grep -E '^\s*127\.0\.0\.1\s+localhost' /etc/hosts
     127.0.0.1   localhost
 
-### 2. Local Hostname Resolution
+### Local Hostname Resolution
 
 Your computer also needs to know its own name (*hostname*). On personal Linux desktops, it is standard practice to map the hostname to *127.0.1.1*. This keeps it separate from the generic *localhost* entry and avoids conflicts with some network services.
 
@@ -2011,7 +2035,7 @@ The SSH *client* is the part you use to initiate connections (e.g., `ssh user@re
 
 ## CUPS Security Hardening
 
-### CUPS Security Hardening: Disabling `cups-browsed`
+### Disabling `cups-browsed`
 
 The Common UNIX Printing System (CUPS) is a modular printing system that allows a local system to act as a print server. The cups-browsed service is responsible for discovering remote CUPS printers and advertising local shared printers on the network, typically using protocols like DNS-SD (Bonjour/mDNS).
 
@@ -2039,7 +2063,7 @@ This command both stops the running service and removes the symlink that enables
 
 ## Disable or Remove Unnecessary File Sharing Services (Samba)
 
-### Disable or Remove Unnecessary File Sharing Services: Samba (SMB)
+### Samba (SMB)
 
 The Samba service provides *SMB/CIFS* file and print services for communication with Windows clients and other operating systems. On servers or workstations that do not explicitly need to act as a file or print server for Windows environments, the Samba service MUST be disabled or removed.
 
@@ -2099,10 +2123,10 @@ To verify your resolver is only listening locally:
 
 Standard DNS is unencrypted. To prevent Machine-in-the-Middle attacks, your system should use *DNS-over-TLS (DoT)* to encrypt queries or *DNSSEC* to cryptographically verify responses.
 
-- **Systemd-resolved**: This is the default on most modern desktops. You can enable encryption by editing */etc/systemd/resolved.conf*:
+- **Systemd-resolved**: This is the default on most modern desktops. Enable encryption by editing */etc/systemd/resolved.conf*. Use `opportunistic`, which encrypts where the resolver supports DNS-over-TLS and falls back to plain DNS where it does not. `DNSOverTLS=yes` is strict: if any configured resolver lacks DoT support, *all* name resolution fails, which on a client is indistinguishable from the network being down.
 
       [Resolve]
-      DNSOverTLS=yes
+      DNSOverTLS=opportunistic
 
 - **Validation**: Tools like *Unbound* can perform *DNSSEC* validation locally, ensuring that the data received has not been tampered with by an ISP or attackers.
 
@@ -2152,9 +2176,8 @@ Where `/etc/resolv.conf` is a regular file maintained by the administrator, enfo
 
 ## Configuring and Hardening the Host Firewall
 
-
 > **Warning (lockout risk):** This control can prevent you from logging in or from reaching the system over the network. Apply it under the *Session Safety Protocol* described in Phase 0.
-### Configuring and Hardening the Host Firewall
+
 
 A host-based firewall is a *mandatory* component that implements *Defense-in-Depth* by blocking unwanted traffic from the Internet or local network. The specific firewall tool differs by distribution:
 
@@ -2861,9 +2884,8 @@ If you are applying this guide to a server rather than a client, add it:
 
 ## Install and Configure USBGuard
 
-
 > **Warning (lockout risk):** USBGuard can block a USB keyboard, including the one you are typing on. Generate the policy with all required peripherals connected, and follow the *Session Safety Protocol* in Phase 0: start the service without enabling it, and enable it at boot only once the policy has been tested.
-### Install and Configure USBGuard
+
 
 USBGuard is a framework that allows you to control which USB devices are permitted to interact with your system. By default, Linux allows any plugged-in USB device to function, which creates risks such as BadUSB attacks, unauthorized data exfiltration, or the installation of malicious software.
 
